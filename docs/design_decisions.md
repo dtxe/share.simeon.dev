@@ -1,0 +1,45 @@
+# Design Decisions
+
+Running log of decisions that aren't obvious from the code. Full original plan: see `docs/plan.md` (copied from the planning session) for complete context; this file is the trimmed, living version — update it when a decision changes instead of leaving it stale.
+
+## Stack
+- **Go + chi** backend, **Postgres** (pgx/v5) durable store, **Redis** for ephemeral counters only (rate limits, LLM daily spend cap) — never identity data.
+- **Vite + React**, Tailwind v4 + a *minimal* shadcn/ui subset (Button, Input, Drawer/vaul, Badge, Tabs) — not the full catalog, to keep bundle small. `wouter` for routing over react-router (app only has ~6 routes).
+- **mise** pins Go/Node versions and defines dev tasks; docker compose is still the actual runtime.
+- Go pinned to **1.25** (bumped up from an initial 1.22 pin once it became clear current chi/pgx/migrate/go-redis/go-webauthn releases all require 1.24+). Backend dev hot reload via `air@latest`. Backend's dev-only host port is `8081` (not `8080`) to avoid clashing with the frontend prod nginx image's `8080:80` mapping when compose merges base + override files.
+- **docker compose** services: postgres, redis, mailpit (dev-only SMTP catcher), backend, frontend.
+
+## Identity: anonymous by default, email/passkey as optional upgrades
+Went through several rounds of direction before landing here — earlier sketches (bearer edit/view token pair, then client-id header, then mandatory OTP+passkey login) are all superseded.
+
+- **Anonymous is not a special case.** Every visitor is a real `users` row (nullable email) from their first request, auto-provisioned by the `Identify` middleware. One session mechanism serves anonymous and authenticated users identically — no separate code path.
+- **Transport: httpOnly cookie**, not localStorage/header, chosen because the app renders LLM-extracted text and receipt data in the DOM — an XSS-readable identity value (localStorage or a non-httpOnly cookie) would be a real exfiltration risk. `ANON_IDENTITY_TRANSPORT=header` mode exists for split-origin deployments but isn't the default.
+- **Email OTP and passkeys are optional, never mandatory** (`ANON_ACCOUNTS_ENABLED=true` default; operators can flip it to force login). They exist purely so a user can get their bill history back on another device — not a gate on using the app.
+- **Passkey registration is an in-place upgrade** of the current anonymous user row (no separate signup). Passkey login resolves credential → user and repoints the session; because passkeys sync via the platform's own credential manager (iCloud Keychain, Google Password Manager), this gives real cross-device continuity without ever collecting an email.
+- **OTP merge behavior is decisive, not a menu**: verifying an email with no prior owner just attaches it to the current row in place. Verifying an email that's already attached to a *different* row (e.g. a second device with its own anonymous history) triggers an automatic merge — advisory-locked transaction, folds the second row's bills/credentials/sessions onto the first, deletes the now-empty row. No manual reconciliation UI.
+- **Public share links stay a separate mechanism**: a 128-bit `crypto/rand` view token (sha256-hashed at rest, `bv_` prefix), addressed via an isolated `httpapi/public` package with no access to session/auth machinery. Edit access, by contrast, is just "does my session's `user_id` match `bill_sessions.owner_user_id`" — no bearer edit-token needed once real per-request identity exists.
+
+## LLM integration
+- **Provider interface** (`internal/llm.Provider`), not a hardcoded Fireworks call — `fireworks/` is the default impl, `openai/` is a sibling proving swappability (Fireworks' endpoint is OpenAI-wire-compatible, so this costs little).
+- Default model: `accounts/fireworks/models/kimi-k2p7-code` via Fireworks' `chat/completions`, image sent as base64 `image_url` content part, `response_format: json_schema` requested for reliable structured extraction (restaurant name, date, items) instead of prompt+regex parsing.
+- **Cost controls are load-bearing, not decorative**: a global Redis-backed daily spend cap (`LLM_DAILY_SPEND_CAP_CENTS`, default $1/day) checked *before* every call, plus per-IP and per-session extraction caps. This exists because receipt extraction is the one endpoint that costs real money per call and has no natural rate limit otherwise.
+- Same modularity pattern applied to **email delivery** (`internal/email.Provider`, SMTP default) — swap providers via env vars only.
+
+## Receipt upload handling
+- Validate by sniffing magic bytes (`http.DetectContentType`), not client-supplied Content-Type/extension.
+- Dimension check before full decode (decompression-bomb guard), then **always re-encode to JPEG q80** server-side — this strips EXIF/GPS (real privacy leak on an image behind a *public* share link) and neutralizes polyglot-file tricks, not just a size optimization.
+- Server-generated filenames only (`{uuid}.jpg`) — no client-controlled byte ever touches a filesystem path.
+
+## Split calculation
+- Backend (`internal/split`) is the single source of truth, integer cents throughout, largest-remainder rounding so per-person amounts always sum exactly to the entered total paid. Frontend has a mirrored formula (`lib/split.ts`) but only for instant local preview — the Results screen always reconciles against the backend before showing a number as final.
+- Dishes with zero assigned shares are surfaced as "unassigned" warnings, never silently dropped from the math.
+- Money columns in Postgres are `BIGINT` cents (`unit_price_cents`, `total_paid_cents`, `subtotal_cents`), not `NUMERIC(10,2)` as an earlier architecture-pass sketch had it — matches "integer cents throughout" exactly and sidesteps numeric/float rounding entirely, at the cost of the DB values not being human-readable as currency without dividing by 100.
+
+## Implementation notes (things that bit us during scaffolding)
+- `go:embed` cannot reference parent directories (`../../migrations` fails) — migrations live at `backend/internal/db/migrations/`, embedded from within the `db` package itself, not at the top-level `backend/migrations/` an earlier sketch assumed.
+- `golang-migrate`'s `iofs` source requires `{version}_{name}.up.sql` / `.down.sql` filenames, not bare `.sql` — every migration needs both files even though we only call `.Up()` at boot.
+- Toolchain: started pinned to Go 1.22 per the original plan, but current chi/pgx/migrate/go-redis/go-webauthn releases all require Go 1.24+ — bumped the pin to **1.25** everywhere (`.mise.toml`, `docker/backend.Dockerfile`, `go.mod`).
+- Header-transport identity mode (`ANON_IDENTITY_TRANSPORT=header`) returns the new session token via an `X-Anon-Session-Token` response header (CORS-exposed) rather than a JSON body field — keeps the `Identify` middleware fully generic across every handler instead of coupling it to specific response shapes.
+
+## Assign screen: "focus + rail," not literal two columns
+User's original mental model was a literal two-column screen (dishes | people). Design review (delegated to Fable) flagged that true side-by-side columns don't fit a phone viewport legibly (~170px each). Presented three concrete alternatives; user picked **focus + rail**: full-width scrollable dish list, sticky bottom people rail. Tapping a dish turns the rail into assign-controls for that dish; tapping a person (with nothing selected) grows inline steppers on every dish row for that person. Same underlying shares map either direction, one shared selection/adjustment action — preserves the two-way interaction the user wanted without the cramped layout.

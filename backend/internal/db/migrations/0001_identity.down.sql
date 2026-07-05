@@ -1,0 +1,4 @@
+DROP TABLE IF EXISTS otp_codes;
+DROP TABLE IF EXISTS webauthn_credentials;
+DROP TABLE IF EXISTS sessions;
+DROP TABLE IF EXISTS users;

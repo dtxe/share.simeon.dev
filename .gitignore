@@ -1,0 +1,27 @@
+# env / secrets
+.env
+secrets/
+
+# data
+uploads/
+/pgdata/
+
+# go
+backend/tmp/
+backend/*.log
+/backend/server
+
+# node
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+
+# editor/OS
+.DS_Store
+*.swp
+
+# mise
+.mise.local.toml
+
+# claude code local state
+.claude/

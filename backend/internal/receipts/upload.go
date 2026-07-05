@@ -1,0 +1,116 @@
+// Package receipts handles receipt image uploads: validating what was
+// actually sent (not what the client claims it sent), guarding against
+// decompression bombs, and re-encoding everything to a normalized JPEG
+// before it ever touches disk or gets served back out.
+package receipts
+
+import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
+	"fmt"
+	"image"
+	"image/jpeg"
+	_ "image/png" // decoder registration
+	"io"
+	"net/http"
+	"os"
+	"path/filepath"
+
+	_ "golang.org/x/image/webp" // decoder registration (decode-only, no encoder needed)
+)
+
+const (
+	MaxUploadBytes = 10 << 20 // 10 MiB
+	maxPixels      = 40_000_000
+	jpegQuality    = 80
+)
+
+var allowedMimeTypes = map[string]bool{
+	"image/jpeg": true,
+	"image/png":  true,
+	"image/webp": true,
+}
+
+type Storage struct {
+	Dir string
+}
+
+func New(dir string) *Storage {
+	return &Storage{Dir: dir}
+}
+
+// Save validates and stores an uploaded receipt image, returning the path
+// (relative to Dir) to persist on the bill_sessions row. The returned path
+// component is always server-generated — no byte of the client's original
+// filename is used, which is what makes path traversal / overwrite
+// collisions a non-issue here.
+func (s *Storage) Save(sessionID string, r io.Reader) (relPath string, err error) {
+	limited := io.LimitReader(r, MaxUploadBytes+1)
+	raw, err := io.ReadAll(limited)
+	if err != nil {
+		return "", fmt.Errorf("receipts: reading upload: %w", err)
+	}
+	if len(raw) > MaxUploadBytes {
+		return "", fmt.Errorf("receipts: upload exceeds %d bytes", MaxUploadBytes)
+	}
+
+	sniffLen := 512
+	if len(raw) < sniffLen {
+		sniffLen = len(raw)
+	}
+	detected := http.DetectContentType(raw[:sniffLen])
+	if !allowedMimeTypes[detected] {
+		return "", fmt.Errorf("receipts: unsupported content type %q", detected)
+	}
+
+	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
+	if err != nil {
+		return "", fmt.Errorf("receipts: reading image dimensions: %w", err)
+	}
+	if int64(cfg.Width)*int64(cfg.Height) > maxPixels {
+		return "", fmt.Errorf("receipts: image dimensions too large (%dx%d)", cfg.Width, cfg.Height)
+	}
+
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil {
+		return "", fmt.Errorf("receipts: decoding image: %w", err)
+	}
+
+	dir := filepath.Join(s.Dir, sessionID)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", fmt.Errorf("receipts: creating storage dir: %w", err)
+	}
+
+	name, err := randomFilename()
+	if err != nil {
+		return "", err
+	}
+	relPath = filepath.Join(sessionID, name)
+	fullPath := filepath.Join(s.Dir, relPath)
+
+	f, err := os.Create(fullPath)
+	if err != nil {
+		return "", fmt.Errorf("receipts: creating file: %w", err)
+	}
+	defer f.Close()
+
+	if err := jpeg.Encode(f, img, &jpeg.Options{Quality: jpegQuality}); err != nil {
+		return "", fmt.Errorf("receipts: re-encoding as jpeg: %w", err)
+	}
+
+	return relPath, nil
+}
+
+// Open returns the stored, re-encoded JPEG bytes for serving.
+func (s *Storage) Open(relPath string) (*os.File, error) {
+	return os.Open(filepath.Join(s.Dir, relPath))
+}
+
+func randomFilename() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b) + ".jpg", nil
+}

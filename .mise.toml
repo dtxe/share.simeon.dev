@@ -1,0 +1,27 @@
+[tools]
+go = "1.25"
+node = "22"
+
+[tasks.dev]
+description = "Start full stack via docker compose"
+run = "docker compose up --build"
+
+[tasks.down]
+description = "Stop full stack"
+run = "docker compose down"
+
+[tasks.migrate]
+description = "Run backend migrations against the compose postgres"
+run = "docker compose exec backend /app/server -migrate-only"
+
+[tasks."test-backend"]
+description = "Run Go unit tests"
+run = "cd backend && go test ./..."
+
+[tasks."test-frontend"]
+description = "Run frontend unit tests"
+run = "cd frontend && npm test"
+
+[tasks.build]
+description = "Build production images"
+run = "docker compose -f docker-compose.yml build"

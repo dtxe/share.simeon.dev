@@ -1,0 +1,47 @@
+package httpapi
+
+import (
+	"log"
+	"net/http"
+
+	"cher-app/backend/internal/auth"
+)
+
+// On a Redis error, these fail open (log and let the request through)
+// rather than taking the whole API down over a Redis hiccup — the
+// Postgres-side per-session extract_count cap is the backstop for the one
+// route (extraction) where failing open would actually matter for cost.
+
+func (s *Server) globalRateLimit(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := auth.ClientIP(r, s.Cfg.TrustedProxy)
+		ok, err := s.RL.AllowGlobalPerIP(r.Context(), ip)
+		if err != nil {
+			log.Printf("ratelimit: global check failed, failing open: %v", err)
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !ok {
+			writeJSONError(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}
+
+func (s *Server) rateLimitOTPRequest(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := auth.ClientIP(r, s.Cfg.TrustedProxy)
+		ok, err := s.RL.AllowOTPRequestPerIP(r.Context(), ip, s.Cfg.OTPRequestRatePerIPPerHr)
+		if err != nil {
+			log.Printf("ratelimit: otp check failed, failing open: %v", err)
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !ok {
+			writeJSONError(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

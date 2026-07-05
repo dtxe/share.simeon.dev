@@ -1,0 +1,5 @@
+DROP TABLE IF EXISTS extraction_runs;
+DROP TABLE IF EXISTS portions;
+DROP TABLE IF EXISTS dishes;
+DROP TABLE IF EXISTS people;
+DROP TABLE IF EXISTS bill_sessions;
