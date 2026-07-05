@@ -5,7 +5,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"cher-app/backend/internal/auth"
+	"share/backend/internal/auth"
 )
 
 func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {

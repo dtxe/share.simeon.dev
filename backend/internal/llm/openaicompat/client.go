@@ -16,7 +16,7 @@ import (
 	"net/http"
 	"time"
 
-	"cher-app/backend/internal/llm"
+	"share/backend/internal/llm"
 )
 
 const extractionPrompt = `You are extracting structured data from a photo of a restaurant receipt.

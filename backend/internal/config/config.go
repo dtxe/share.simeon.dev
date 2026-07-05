@@ -82,14 +82,14 @@ func Load() (*Config, error) {
 
 		AnonAccountsEnabled:       getBool("ANON_ACCOUNTS_ENABLED", true),
 		AnonIdentityTransport:     getEnv("ANON_IDENTITY_TRANSPORT", "cookie"),
-		AnonSessionCookieName:     getEnv("ANON_SESSION_COOKIE_NAME", "cher_sid"),
+		AnonSessionCookieName:     getEnv("ANON_SESSION_COOKIE_NAME", "share_sid"),
 		AnonSessionHeaderName:     getEnv("ANON_SESSION_HEADER_NAME", "X-Anon-Session-Token"),
 		AnonSessionTTLDays:        getInt("ANON_SESSION_TTL_DAYS", 730),
 		SessionTouchMinIntervalHr: getInt("SESSION_TOUCH_MIN_INTERVAL_HOURS", 24),
 
 		PasskeyAccountsEnabled: getBool("PASSKEY_ACCOUNTS_ENABLED", false),
 		PasskeyRPID:            getEnv("PASSKEY_RP_ID", "localhost"),
-		PasskeyRPName:          getEnv("PASSKEY_RP_NAME", "Cher"),
+		PasskeyRPName:          getEnv("PASSKEY_RP_NAME", "Share"),
 		PasskeyOrigin:          getEnv("PASSKEY_ORIGIN", "http://localhost:5173"),
 
 		EmailOTPEnabled:          getBool("EMAIL_OTP_ENABLED", true),
@@ -103,7 +103,7 @@ func Load() (*Config, error) {
 		SMTPPort:      getInt("SMTP_PORT", 1025),
 		SMTPUser:      getEnv("SMTP_USER", ""),
 		SMTPPass:      getEnv("SMTP_PASS", ""),
-		SMTPFrom:      getEnv("SMTP_FROM", "cher@localhost"),
+		SMTPFrom:      getEnv("SMTP_FROM", "share@localhost"),
 
 		LLMProvider:             getEnv("LLM_PROVIDER", "fireworks"),
 		LLMBaseURL:              getEnv("LLM_BASE_URL", "https://api.fireworks.ai/inference/v1"),

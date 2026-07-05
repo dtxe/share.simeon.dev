@@ -8,8 +8,8 @@ package openai
 import (
 	"context"
 
-	"cher-app/backend/internal/llm"
-	"cher-app/backend/internal/llm/openaicompat"
+	"share/backend/internal/llm"
+	"share/backend/internal/llm/openaicompat"
 )
 
 type Provider struct {

@@ -10,8 +10,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"cher-app/backend/internal/auth"
-	"cher-app/backend/internal/store"
+	"share/backend/internal/auth"
+	"share/backend/internal/store"
 )
 
 func storeErrToStatus(w http.ResponseWriter, err error) {

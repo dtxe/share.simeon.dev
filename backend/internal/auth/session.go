@@ -16,7 +16,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"cher-app/backend/internal/config"
+	"share/backend/internal/config"
 )
 
 var ErrNoSession = errors.New("auth: no valid session")

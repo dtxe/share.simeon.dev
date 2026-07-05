@@ -1,4 +1,4 @@
-module cher-app/backend
+module share/backend
 
 go 1.25.0
 

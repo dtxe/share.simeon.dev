@@ -17,7 +17,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"cher-app/backend/internal/split"
+	"share/backend/internal/split"
 )
 
 var ErrNotFound = errors.New("store: not found")

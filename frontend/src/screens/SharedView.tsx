@@ -58,7 +58,7 @@ export default function SharedView() {
         })}
       </dl>
 
-      <footer className="py-6 text-center text-xs text-neutral-400">Split with Cher</footer>
+      <footer className="py-6 text-center text-xs text-neutral-400">Split with Share</footer>
     </div>
   )
 }

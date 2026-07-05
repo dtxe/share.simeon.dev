@@ -12,7 +12,7 @@ import (
 	"github.com/go-webauthn/webauthn/webauthn"
 	"github.com/jackc/pgx/v5"
 
-	"cher-app/backend/internal/config"
+	"share/backend/internal/config"
 )
 
 var ErrPasskeyDisabled = errors.New("auth: passkey accounts are disabled")

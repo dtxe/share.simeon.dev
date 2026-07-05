@@ -8,8 +8,8 @@ import (
 	"log"
 	"time"
 
-	"cher-app/backend/internal/receipts"
-	"cher-app/backend/internal/store"
+	"share/backend/internal/receipts"
+	"share/backend/internal/store"
 )
 
 const interval = 1 * time.Hour

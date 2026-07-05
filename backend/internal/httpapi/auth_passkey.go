@@ -5,7 +5,7 @@ import (
 	"errors"
 	"net/http"
 
-	"cher-app/backend/internal/auth"
+	"share/backend/internal/auth"
 )
 
 func (s *Server) handlePasskeyRegisterOptions(w http.ResponseWriter, r *http.Request) {

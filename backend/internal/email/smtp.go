@@ -22,7 +22,7 @@ type SMTPProvider struct {
 func (p *SMTPProvider) SendOTP(ctx context.Context, to, code string) error {
 	addr := net.JoinHostPort(p.Host, fmt.Sprintf("%d", p.Port))
 
-	subject := "Your Cher sign-in code"
+	subject := "Your Share sign-in code"
 	body := fmt.Sprintf("Your sign-in code is: %s\r\n\r\nThis code expires in a few minutes. If you didn't request this, you can ignore this email.\r\n", code)
 	msg := fmt.Sprintf("From: %s\r\nTo: %s\r\nSubject: %s\r\nDate: %s\r\n\r\n%s",
 		p.From, to, subject, time.Now().Format(time.RFC1123Z), body)

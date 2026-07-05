@@ -2,6 +2,12 @@
 
 Running log of decisions that aren't obvious from the code. Full original plan: see `docs/plan.md` (copied from the planning session) for complete context; this file is the trimmed, living version — update it when a decision changes instead of leaving it stale.
 
+## Naming: "Cher" → "Share" (2026-07-05)
+- App renamed from "Cher" to "Share." Prod deploy target is `share.simeon.dev`, under the user's main site at `simeon.dev`.
+- Renamed: Go module path (`cher-app/backend` → `share/backend`), Postgres DB name/user (`cher`/`cher_app` → `share`/`share_app`, required wiping the local dev Postgres volume — only test data was lost), session cookie name (`cher_sid` → `share_sid`), passkey RP display name, `SMTP_FROM`, user-facing strings (page title, Welcome heading, SharedView footer), and the Docker Compose project name (`name: share` in `docker-compose.yml`, so containers/images/volumes are now `share-*`/`share_*` instead of `cher-app-*`/`cher-app_*`).
+- **Deliberately not renamed**: the working directory (`/srv/cher-app`) stays as-is — renaming it would break the cwd of any in-progress agent session pointed at it. `docs/plan.md`'s body text (the original historical planning doc) also keeps its original "Cher" references except the title, since it's a frozen historical snapshot, not live config — see its as-built note.
+- `.env.example` intentionally still uses localhost-shaped dev values (`PASSKEY_RP_ID=localhost`, `PASSKEY_ORIGIN=http://localhost:5173`, `PUBLIC_BASE_URL=http://localhost:5173`, `CORS_ALLOWED_ORIGIN=http://localhost:5173`). No prod compose/env file exists yet — when one is built, it should set these to `share.simeon.dev`-based values (`PASSKEY_RP_ID=share.simeon.dev`, `PASSKEY_ORIGIN=https://share.simeon.dev`, etc.) and a real `SMTP_FROM` address on that domain.
+
 ## Stack
 - **Go + chi** backend, **Postgres** (pgx/v5) durable store, **Redis** for ephemeral counters only (rate limits, LLM daily spend cap) — never identity data.
 - **Vite + React**, Tailwind v4 + a *minimal* shadcn/ui subset (Button, Input, Drawer/vaul, Badge, Tabs) — not the full catalog, to keep bundle small. `wouter` for routing over react-router (app only has ~6 routes).

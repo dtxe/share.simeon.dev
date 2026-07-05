@@ -38,7 +38,7 @@ export default function Welcome() {
   return (
     <div className="mx-auto flex max-w-md flex-col gap-6 p-5 pb-24">
       <header className="pt-4 text-center">
-        <h1 className="text-2xl font-semibold">Cher</h1>
+        <h1 className="text-2xl font-semibold">Share</h1>
         <p className="text-sm text-neutral-500">Split a bill with friends, fast.</p>
       </header>
 

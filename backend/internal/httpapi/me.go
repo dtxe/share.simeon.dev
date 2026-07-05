@@ -4,7 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"cher-app/backend/internal/auth"
+	"share/backend/internal/auth"
 )
 
 type meResponse struct {

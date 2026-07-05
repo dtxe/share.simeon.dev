@@ -1,4 +1,4 @@
-# Agent Lessons — gotchas hit while building Cher
+# Agent Lessons — gotchas hit while building Share (formerly "Cher")
 
 Unconventional, easy-to-miss things future work on this repo should know. Ordinary decisions belong in `design_decisions.md`; this file is specifically for traps that cost real debugging time.
 

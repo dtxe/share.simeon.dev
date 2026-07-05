@@ -11,7 +11,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"cher-app/backend/internal/email"
+	"share/backend/internal/email"
 )
 
 var (

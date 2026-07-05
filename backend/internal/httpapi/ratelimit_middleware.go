@@ -4,7 +4,7 @@ import (
 	"log"
 	"net/http"
 
-	"cher-app/backend/internal/auth"
+	"share/backend/internal/auth"
 )
 
 // On a Redis error, these fail open (log and let the request through)

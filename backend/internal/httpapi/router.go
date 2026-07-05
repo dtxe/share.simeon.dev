@@ -7,13 +7,13 @@ import (
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"cher-app/backend/internal/auth"
-	"cher-app/backend/internal/config"
-	"cher-app/backend/internal/email"
-	"cher-app/backend/internal/llm"
-	"cher-app/backend/internal/ratelimit"
-	"cher-app/backend/internal/receipts"
-	"cher-app/backend/internal/store"
+	"share/backend/internal/auth"
+	"share/backend/internal/config"
+	"share/backend/internal/email"
+	"share/backend/internal/llm"
+	"share/backend/internal/ratelimit"
+	"share/backend/internal/receipts"
+	"share/backend/internal/store"
 )
 
 type Server struct {

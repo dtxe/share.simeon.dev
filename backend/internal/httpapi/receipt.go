@@ -9,10 +9,10 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"cher-app/backend/internal/auth"
-	"cher-app/backend/internal/llm"
-	"cher-app/backend/internal/receipts"
-	"cher-app/backend/internal/store"
+	"share/backend/internal/auth"
+	"share/backend/internal/llm"
+	"share/backend/internal/receipts"
+	"share/backend/internal/store"
 )
 
 const maxExtractPerSession = 5

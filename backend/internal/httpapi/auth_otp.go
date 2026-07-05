@@ -7,7 +7,7 @@ import (
 	"net/mail"
 	"strings"
 
-	"cher-app/backend/internal/auth"
+	"share/backend/internal/auth"
 )
 
 type otpRequestBody struct {

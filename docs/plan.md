@@ -1,6 +1,7 @@
-# Cher — Bill Split App Bootstrap
+# Share — Bill Split App Bootstrap
 
 > **As-built note:** this file is the original planning document, kept for historical context. It does not reflect every decision made during implementation — see `docs/design_decisions.md` for the current rationale and `docs/todo.md` for what's actually built/tested. Known drifts from this plan:
+> - The app was renamed from "Cher" to "Share" after initial build (see `docs/design_decisions.md`) — everywhere below that says "Cher" is the original name; the directory (`/srv/cher-app`), Go module-path-adjacent historical references, and DB role names sketched below are left as originally written since they're just this historical document, not live config.
 > - Prod ingress uses **Caddy**, not nginx (automatic HTTPS, simpler config) — everywhere below that says "nginx" should read "Caddy."
 > - Migrations live at `backend/internal/db/migrations/` (not top-level `backend/migrations/`) — `go:embed` can't reference parent directories.
 > - Frontend has no `state/bill.ts` local reducer/localStorage layer — superseded once the identity model settled on real persisted sessions from the first user action; the frontend is a thin React Query client over the live API instead (see design_decisions.md).
