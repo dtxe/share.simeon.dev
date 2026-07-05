@@ -1,0 +1,19 @@
+:80 {
+	encode gzip
+
+	# handle blocks are mutually exclusive and evaluated in file order — the
+	# first match wins and nothing after it runs. This matters here: Caddy's
+	# default *directive* order runs try_files before reverse_proxy
+	# regardless of how they're written below, so without explicit handle
+	# blocks, try_files would silently rewrite /api/* requests to
+	# /index.html before reverse_proxy ever got a chance to match them.
+	handle /api/* {
+		reverse_proxy backend:8080
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}

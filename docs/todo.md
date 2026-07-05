@@ -1,8 +1,8 @@
 # Cher — Build TODO
 
-_Committed as work completes (per your instruction). Backend foundation through step 9 is in commit `859271e`._
+_Committed as work completes (per your instruction). Backend foundation through step 9 is in commit `859271e`; full frontend + bugfixes in `7ebfebb`._
 
-Tracks progress against the approved plan (`docs/design_decisions.md` has the why; this is the what/when).
+Tracks progress against the approved plan (`docs/plan.md` is the original; `docs/design_decisions.md` has the why for what changed; `docs/agent_lessons.md` has gotchas worth knowing before touching this repo again; this file is the what/when).
 
 ## 1. Repo & dev env scaffold
 - [x] `.mise.toml` (pin go, node; tasks: dev/migrate/test-backend/test-frontend/build)
@@ -113,13 +113,17 @@ Tracks progress against the approved plan (`docs/design_decisions.md` has the wh
 - **LLM JSON field naming**: reconciled snake_case (`price_cents`) to camelCase (`priceCents`) across the Go struct tags, the JSON schema sent to the model, and the frontend types, so the whole API is consistently camelCase (caught while wiring the frontend's `api.ts` types against the actual backend response).
 
 ## 13. Prod hardening
-- [ ] nginx same-origin proxy prod build
-- [ ] distroless/non-root backend prod image
-- [ ] docker secrets wiring (LLM key, SMTP password, DB creds)
-- [ ] Daily cleanup job (expired sessions, otp_codes, stale bill_sessions + receipt files)
+- [x] **Caddy** same-origin proxy prod build (correction from the original plan, which assumed nginx — your call). Swapped `docker/frontend.Dockerfile`'s prod stage to `caddy:2-alpine`, replaced `docker/nginx.conf` with `docker/Caddyfile`. Built and ran both prod images standalone against the compose network: homepage 200, `/api/*` correctly proxied to the real backend (not just serving the SPA shell), client-side routes (`/bill/:id/assign`) correctly fall back to `index.html`. Prod JS bundle: 328.64 kB / **101.06 kB gzipped** — under the plan's 120KB budget.
+  - **bug found + fixed**: first Caddyfile attempt used bare `try_files {path} /index.html` + `file_server` alongside a `@api`-matched `reverse_proxy` — but Caddy's default *directive* order runs `try_files` before `reverse_proxy` regardless of the order they're written in the file, so `/api/*` requests were being silently rewritten to `/index.html` before `reverse_proxy` ever got a chance to match them (confirmed live: `curl .../api/me` returned the SPA's HTML, not JSON). Fixed by wrapping both in explicit `handle` blocks, which are mutually exclusive and evaluated in file order — see `docs/agent_lessons.md`.
+  - **process note**: `docker compose build <service>` retags the shared `cher-app-<service>:latest` image regardless of which target you build, so testing the prod target this way temporarily overwrites the tag the running dev container was built from. Restored both by rebuilding through `docker compose up -d --build` (which uses the dev override again) immediately after the prod-image tests.
+- [x] distroless/non-root backend prod image — built and run standalone against the compose network, confirmed `/healthz` → 200
+- [ ] docker secrets wiring (LLM key, SMTP password, DB creds) — `internal/config` already supports the `FOO_FILE` convention, `docker-compose.yml` doesn't yet mount real `secrets:` blocks
+- [x] Daily cleanup job (`internal/cleanup`, hourly sweep) — expired sessions, otp_codes, webauthn_ceremonies, and stale bill_sessions (+ their orphaned receipt files via `receipts.Storage.Delete`); confirmed live in the running dev stack, it actually cleaned up 2 expired OTP codes and 1 stale WebAuthn ceremony left over from earlier manual testing
 
 ## Final verification pass
-- [ ] `docker compose up` full flow, zero login: create bill → receipt → extract → assign → breakdown → share link → incognito view
-- [ ] Second anon identity gets 404 on someone else's bill, not leakage
-- [ ] `ANON_ACCOUNTS_ENABLED=false` → every route 401s without session
-- [ ] Assign screen manually tested on narrow mobile viewport emulation
+- [x] `docker compose up` full flow, zero login: create bill → receipt → extract → assign → breakdown → share link → incognito view — done live via curl (backend) and a real browser (frontend, agent-browser at 390×844); extract confirmed to fail gracefully (no `FIREWORKS_API_KEY` configured) rather than crash
+- [x] Second anon identity gets 404 on someone else's bill, not leakage — verified via curl (backend) and confirmed the public share view never exposes owner/session id regardless
+- [x] `ANON_ACCOUNTS_ENABLED=false` → every route 401s without session — verified, then reverted
+- [x] Assign screen manually tested on narrow mobile viewport emulation — verified live in-browser at 390×844 (agent-browser), both dish-mode and person-mode interactions
+
+Only remaining items anywhere in this file: docker secrets wiring, full WebAuthn browser round-trip, and live Fireworks extraction against a real photo — all blocked on inputs only you can provide (a real API key, or sitting down with an authenticator). Everything else in the original plan is built, wired, and verified against the live stack.

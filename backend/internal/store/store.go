@@ -590,3 +590,56 @@ func (s *Store) ListPortions(ctx context.Context, sessionID, ownerUserID string)
 	}
 	return out, rows.Err()
 }
+
+// --- Cleanup: used only by internal/cleanup's periodic sweep. ---
+
+func (s *Store) DeleteExpiredSessions(ctx context.Context) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, `DELETE FROM sessions WHERE expires_at < now()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (s *Store) DeleteExpiredOTPCodes(ctx context.Context) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, `DELETE FROM otp_codes WHERE expires_at < now()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+func (s *Store) DeleteExpiredWebauthnCeremonies(ctx context.Context) (int64, error) {
+	tag, err := s.Pool.Exec(ctx, `DELETE FROM webauthn_ceremonies WHERE expires_at < now()`)
+	if err != nil {
+		return 0, err
+	}
+	return tag.RowsAffected(), nil
+}
+
+// DeleteExpiredBillSessions removes stale bills (cascading to their people,
+// dishes, portions, and extraction_runs) and returns the receipt image
+// paths that need deleting from disk too — the DB delete doesn't touch the
+// filesystem, so the caller (internal/cleanup) is responsible for that.
+func (s *Store) DeleteExpiredBillSessions(ctx context.Context) (receiptPaths []string, count int64, err error) {
+	rows, err := s.Pool.Query(ctx, `
+		DELETE FROM bill_sessions WHERE expires_at < now()
+		RETURNING receipt_image_path
+	`)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer rows.Close()
+	receiptPaths = []string{}
+	for rows.Next() {
+		var p *string
+		if err := rows.Scan(&p); err != nil {
+			return nil, 0, err
+		}
+		count++
+		if p != nil {
+			receiptPaths = append(receiptPaths, *p)
+		}
+	}
+	return receiptPaths, count, rows.Err()
+}

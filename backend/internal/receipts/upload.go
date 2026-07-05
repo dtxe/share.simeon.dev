@@ -107,6 +107,18 @@ func (s *Storage) Open(relPath string) (*os.File, error) {
 	return os.Open(filepath.Join(s.Dir, relPath))
 }
 
+// Delete removes a stored receipt (used by the cleanup sweep once its bill
+// has expired) and best-effort removes the now-possibly-empty per-session
+// directory it lived in.
+func (s *Storage) Delete(relPath string) error {
+	full := filepath.Join(s.Dir, relPath)
+	if err := os.Remove(full); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	_ = os.Remove(filepath.Dir(full)) // no-op if not empty
+	return nil
+}
+
 func randomFilename() (string, error) {
 	b := make([]byte, 16)
 	if _, err := rand.Read(b); err != nil {

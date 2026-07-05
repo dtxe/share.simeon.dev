@@ -1,5 +1,14 @@
 # Cher — Bill Split App Bootstrap
 
+> **As-built note:** this file is the original planning document, kept for historical context. It does not reflect every decision made during implementation — see `docs/design_decisions.md` for the current rationale and `docs/todo.md` for what's actually built/tested. Known drifts from this plan:
+> - Prod ingress uses **Caddy**, not nginx (automatic HTTPS, simpler config) — everywhere below that says "nginx" should read "Caddy."
+> - Migrations live at `backend/internal/db/migrations/` (not top-level `backend/migrations/`) — `go:embed` can't reference parent directories.
+> - Frontend has no `state/bill.ts` local reducer/localStorage layer — superseded once the identity model settled on real persisted sessions from the first user action; the frontend is a thin React Query client over the live API instead (see design_decisions.md).
+> - The bearer edit-token idea from the first design pass never shipped — ownership is session+`owner_user_id`, exactly as the "Reconciliation" note below already anticipated.
+> - Frontend skipped shadcn's actual component set (Button/Input/Badge/Tabs); kept only `vaul` for the two drawers.
+> - API is consistently camelCase, including LLM-extracted JSON (this plan's `internal/llm` sketch predates that reconciliation).
+> - Go pinned to 1.25, not 1.22 (see `docs/agent_lessons.md`).
+
 ## Context
 
 Empty repo (`/srv/cher-app`, no git yet). Building from scratch: mobile-first web app to split restaurant bills between friends. User provides receipt (photo or manual entry) + people, assigns portions per dish, app computes weighted split, produces a public read-only share link with the breakdown + receipt image. Uses Kimi K2.7 on Fireworks AI for receipt OCR/extraction, but the LLM provider must stay swappable (interface-based, not hardcoded).
@@ -22,7 +31,7 @@ Dev environment: **mise** pins Go/Node versions and defines dev tasks, on top of
 ├── .gitignore / .dockerignore  # must exclude .env, secrets/
 ├── docker/
 │   ├── backend.Dockerfile      # multi-stage: dev (air reload) / prod (distroless, non-root)
-│   └── frontend.Dockerfile     # multi-stage: dev (vite) / prod (nginx, same-origin proxy)
+│   └── frontend.Dockerfile     # multi-stage: dev (vite) / prod (Caddy, same-origin proxy)
 ├── backend/
 │   ├── cmd/server/main.go
 │   ├── internal/
@@ -232,7 +241,7 @@ Default: SMTP — works against any real provider's relay (SES/Postmark/Sendgrid
 - Per-session `extract_count` cap (max 5, race-safe conditional `UPDATE`) as a belt-and-suspenders limit if Redis is ever unavailable.
 - 60s upstream timeout, bounded `max_tokens`, LLM output parsed with `DisallowUnknownFields`, extracted values re-validated through the same bounds as manual input.
 
-**Headers/CORS:** same-origin in prod (nginx fronts both frontend+backend); dev allows only the Vite origin. Security headers: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, CSP on the SPA shell.
+**Headers/CORS:** same-origin in prod (Caddy fronts both frontend+backend); dev allows only the Vite origin. Security headers: `X-Content-Type-Options: nosniff`, `Referrer-Policy: no-referrer`, `X-Frame-Options: DENY`, CSP on the SPA shell.
 
 ## Frontend
 
@@ -269,7 +278,7 @@ Default: SMTP — works against any real provider's relay (SES/Postmark/Sendgrid
 10. Frontend scaffold (vite, tailwind, shadcn subset, wouter, zustand) + Welcome (history + save-history banner)/People/Items screens
 11. Assign screen (bulk of frontend work) + Total paid drawer + Results
 12. Wire receipt upload/extraction end to end; SharedView + share-link creation
-13. Prod Docker paths (nginx same-origin proxy, distroless backend) + secrets wiring + final compose
+13. Prod Docker paths (Caddy same-origin proxy, distroless backend) + secrets wiring + final compose
 
 ## Verification
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 
 	"cher-app/backend/internal/auth"
+	"cher-app/backend/internal/cleanup"
 	"cher-app/backend/internal/config"
 	"cher-app/backend/internal/db"
 	"cher-app/backend/internal/email"
@@ -72,6 +73,13 @@ func main() {
 		log.Fatalf("unknown LLM_PROVIDER %q", cfg.LLMProvider)
 	}
 
+	st := store.New(pool)
+	rs := receipts.New(cfg.UploadDir)
+
+	cleanupCtx, stopCleanup := context.WithCancel(ctx)
+	defer stopCleanup()
+	go cleanup.Run(cleanupCtx, st, rs)
+
 	router := httpapi.NewRouter(&httpapi.Server{
 		Pool:     pool,
 		Cfg:      cfg,
@@ -79,8 +87,8 @@ func main() {
 		Email:    emailProvider,
 		RL:       limiter,
 		LLM:      llmProvider,
-		Store:    store.New(pool),
-		Receipts: receipts.New(cfg.UploadDir),
+		Store:    st,
+		Receipts: rs,
 	})
 
 	log.Printf("listening on %s", cfg.HTTPAddr)
