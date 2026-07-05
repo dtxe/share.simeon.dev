@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -15,6 +16,15 @@ type Config struct {
 
 	DatabaseURL string
 	RedisURL    string
+
+	// DB* are used to build DatabaseURL when DATABASE_URL itself isn't set —
+	// lets the password come from a docker secret file (DB_PASSWORD_FILE)
+	// without needing compose to interpolate secret contents into env vars.
+	DBHost     string
+	DBPort     string
+	DBUser     string
+	DBPassword string
+	DBName     string
 
 	AnonAccountsEnabled       bool
 	AnonIdentityTransport     string // "cookie" | "header"
@@ -64,6 +74,12 @@ func Load() (*Config, error) {
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 		RedisURL:    getEnv("REDIS_URL", ""),
 
+		DBHost:     getEnv("DB_HOST", "postgres"),
+		DBPort:     getEnv("DB_PORT", "5432"),
+		DBUser:     getEnv("DB_USER", ""),
+		DBPassword: getEnv("DB_PASSWORD", ""),
+		DBName:     getEnv("DB_NAME", ""),
+
 		AnonAccountsEnabled:       getBool("ANON_ACCOUNTS_ENABLED", true),
 		AnonIdentityTransport:     getEnv("ANON_IDENTITY_TRANSPORT", "cookie"),
 		AnonSessionCookieName:     getEnv("ANON_SESSION_COOKIE_NAME", "cher_sid"),
@@ -100,7 +116,11 @@ func Load() (*Config, error) {
 	}
 
 	if cfg.DatabaseURL == "" {
-		return nil, fmt.Errorf("DATABASE_URL is required")
+		if cfg.DBUser == "" || cfg.DBPassword == "" || cfg.DBName == "" {
+			return nil, fmt.Errorf("DATABASE_URL is required (or DB_HOST/DB_PORT/DB_USER/DB_PASSWORD[_FILE]/DB_NAME)")
+		}
+		cfg.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable",
+			url.QueryEscape(cfg.DBUser), url.QueryEscape(cfg.DBPassword), cfg.DBHost, cfg.DBPort, cfg.DBName)
 	}
 	if cfg.RedisURL == "" {
 		return nil, fmt.Errorf("REDIS_URL is required")

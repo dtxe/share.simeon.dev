@@ -44,8 +44,15 @@ Unconventional, easy-to-miss things future work on this repo should know. Ordina
 
 ## Remaining TODO (not yet done)
 
-- **Docker secrets wiring** — `internal/config` already supports the `FOO_FILE` convention, but `docker-compose.yml` doesn't yet mount real `secrets:` blocks; dev still uses a plain `.env` file via `env_file:`.
 - **Full WebAuthn round trip** — ceremony endpoints are live and return real challenges, but completing a registration/login needs a real browser + platform authenticator, which hasn't been exercised (curl can't fake WebAuthn attestation).
 - **Live Fireworks extraction** — blocked on a real `FIREWORKS_API_KEY`; the graceful-failure path (502, no leaked upstream detail) is confirmed, but no real receipt photo has been run through it yet.
 
 Done since first written: daily cleanup job (`internal/cleanup`, wired into `main.go`, confirmed live removing expired OTP codes/WebAuthn ceremonies) and the Caddy prod-ingress build (both prod Docker images built and smoke-tested standalone — see `docs/todo.md` step 13 for details, including the Caddy directive-order bug above).
+
+## Docker secrets
+
+- `docker-compose.yml` now has a top-level `secrets:` block backed by files in `./secrets/` (gitignored): `postgres_password`, `llm_api_key`, `smtp_pass`.
+- **`DATABASE_URL` can't be assembled by compose itself** — compose has no built-in way to interpolate a secret file's contents into another env var's value at the YAML level. Instead, `internal/config` grew discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` fields; if `DATABASE_URL` isn't set directly, `Load()` builds it from those parts, and `DB_PASSWORD` resolves via the existing `_FILE` convention (`DB_PASSWORD_FILE=/run/secrets/postgres_password`). Both the `postgres` container and the `backend` container mount the *same* secret file, so there's one password with two independent read paths (postgres's native `POSTGRES_PASSWORD_FILE` support, and our own `getEnv`).
+- **Don't set both `POSTGRES_PASSWORD` and `POSTGRES_PASSWORD_FILE`** on the postgres official image — it refuses to start if both are present. Once a secret file is wired, drop the plain env var entirely (removed from both `.env` and `.env.example`), don't just leave it unused as a fallback.
+- Empty secret files (e.g. `llm_api_key.txt`, `smtp_pass.txt` are 0 bytes in dev — no LLM key yet, mailpit needs no auth) resolve to `""` via `_FILE`, same as an unset plain env var would — no special-casing needed for "optional" secrets.
+- Swapping `POSTGRES_PASSWORD` → `POSTGRES_PASSWORD_FILE` recreates the postgres *container* (env changed) but does **not** reinitialize the *volume* — first-run init scripts only run once against an empty data dir. As long as the secret file's contents match whatever password the volume was originally initialized with, auth keeps working across the switch. If they don't match, the fix is `ALTER USER` from inside the running container, not a volume wipe.
