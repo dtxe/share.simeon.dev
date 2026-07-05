@@ -1,5 +1,7 @@
 # Cher — Build TODO
 
+_Committed as work completes (per your instruction). Backend foundation through step 9 is in commit `859271e`._
+
 Tracks progress against the approved plan (`docs/design_decisions.md` has the why; this is the what/when).
 
 ## 1. Repo & dev env scaffold
@@ -77,30 +79,38 @@ Tracks progress against the approved plan (`docs/design_decisions.md` has the wh
 - [x] Full manual e2e via curl: create session → add 2 people → add 2 dishes → assign uneven shares (2:1) → set total paid → breakdown math verified by hand → share link → public view (confirmed no owner id/internal id leaked) → uploaded + fetched a real receipt image both ways → confirmed a *second* anonymous identity gets 404 (not data) on the first user's session
   - bug found + fixed: `store.Person`/`Dish`/`Portion` and `split.PersonBreakdown`/`Result` had no JSON tags, so the API was serializing Go's capitalized field names instead of the camelCase the rest of the API uses — added tags
   - bug found + fixed: the ratelimit package's own test (`TestReserveLLMSpendRollsBackRejection`) was writing to the **same Redis key the running app uses for today's real LLM spend cap** (no test/prod key separation), and had pushed it to 1,000,000+ cents, which then made the live `/extract` endpoint immediately 503 with "daily budget reached." Fixed the test to clean up its own delta via `t.Cleanup`, and manually reset the polluted key. Worth revisiting if a proper test-isolation mechanism (e.g. a key-namespace parameter) is wanted later — flagged, not fully solved
-  - note: LLM-extracted JSON uses snake_case keys (`price_cents`, `restaurant_name`) since that's the schema handed to the model, while the rest of the API is camelCase — minor inconsistency, easy to reconcile at frontend-integration time, not fixed now
+  - note: LLM-extracted JSON originally used snake_case keys since that mirrored the schema handed to the model; reconciled to camelCase (both the Go struct tags and the JSON schema sent to the model) while starting frontend integration, so the whole API is consistently camelCase now
 
 ## 10. Frontend scaffold
-- [ ] Vite + React + Tailwind v4 + shadcn subset (Button, Input, Drawer/vaul, Badge, Tabs) + wouter + lucide-react
-- [ ] `state/bill.ts` reducer + localStorage sync
-- [ ] `lib/split.ts` (mirrors backend cents math)
-- [ ] `theme.css` design tokens
-- [ ] `auth/useMe.ts` + fetch wrapper (`credentials: 'include'`)
-- [ ] Welcome screen (3 BigActionCards + "Your bills" history + SaveHistoryBanner)
-- [ ] People screen
-- [ ] Items screen (manual + receipt review, shared ItemEditorList)
+- [x] Vite + React (TS) + Tailwind v4 (`@tailwindcss/vite`) + wouter + lucide-react + zustand + `@tanstack/react-query` + vaul
+  - simplified from the original plan's "minimal shadcn subset": hand-wrote Button/Input-equivalent styling directly with Tailwind instead of pulling in shadcn's Radix Button/Input/Badge/Tabs primitives — the actual components needed (PersonChip, DishRow, PeopleRail) are custom anyway, so the subset would have added little; kept `vaul` for the drawer since that's genuinely fiddly to hand-roll (focus trap, drag-to-dismiss)
+- [x] `lib/api.ts` — typed fetch wrapper (`credentials:'include'`) covering every backend endpoint
+- [x] `lib/split.ts` — local preview math mirroring backend cents/largest-remainder formula, reconciled against the server before anything is shown as final
+- [x] `index.css` design tokens (color, people palette) — no separate `state/bill.ts` reducer/localStorage layer, since the backend now persists everything from session creation onward (superseded by the identity-model rework; React Query against the live API replaced the originally-planned local-first reducer)
+- [x] `auth/useMe.ts` + `SaveHistoryBanner` (inline email OTP request/verify UI)
+- [x] Welcome screen (3 BigActionCards + "Your bills" history + SaveHistoryBanner) — verified in a real mobile-viewport browser
+- [x] People screen — verified live: add/remove chips, round-robin colors, Next gating on 2+ people
+- [x] Items screen (manual entry + receipt review share the same editable list; extract button appears once a receipt exists)
 
 ## 11. Assign screen (focus + rail)
-- [ ] DishRow list, sticky PeopleRail, PersonChip
-- [ ] Selection state machine (dish-mode / person-mode), shared `ADJUST_SHARES` action
-- [ ] ShareStepper, "Split evenly" pill
-- [ ] Exit gate warning on unassigned dishes
-- [ ] Total paid drawer (reachable from Assign + Results)
-- [ ] Results screen (PersonResultCard accordion, Share link CTA)
+- [x] DishRow list, sticky PeopleRail, PersonChip — all built and verified live
+- [x] Selection state machine (`state/assignSelection.ts`, zustand) — dish-mode and person-mode both verified interactively in-browser (tap dish → rail becomes assign chips; tap person while idle → dish rows grow inline steppers)
+- [x] ShareStepper (inline +/- in person-mode), "Split evenly" pill
+- [x] Exit gate warning on unassigned dishes (offers to split remainder evenly)
+- [x] Total paid drawer (reachable from Assign + Results) — live-verified the save/prefill round trip
+- [x] Results screen (PersonResultCard accordion, Share link CTA) — live-verified
 
 ## 12. Receipt + share end-to-end
-- [ ] Wire upload → extract → ItemsReview end to end
-- [ ] SharedView (`/s/:token`) code-split chunk, chrome-free
-- [ ] Share link creation/rotation
+- [x] Items screen wired to `POST /sessions/:id/extract`; graceful failure path tested live (no API key configured)
+- [x] SharedView (`/s/:token`) — chrome-free, live-verified in a **separate cookie-less browser session** (confirmed zero cookies sent, correct names/amounts rendered, no owner/session id or edit capability exposed)
+- [x] Share link creation — live-verified end to end (Results → Share link → copy → open in fresh session → correct public breakdown)
+
+### Bugs found via live browser testing (all fixed)
+- **Nil-slice → `null` JSON crash**: several `internal/store` list functions and `split.Compute`'s `UnassignedDishIDs` used `var out []T`, which Go serializes as JSON `null` (not `[]`) when empty. The frontend's `.map()` over an empty dish/people list crashed the whole app on a brand-new bill. Fixed by initializing every list-returning function with `T{}` instead of `var`.
+- **Public share view leaked no data, but initially had no names to show**: `GET /api/view/{token}` only returned `result.people[].personId` (a raw UUID) with no name, so the public page would have shown "Person 1" instead of "Alice." Added `ListPeoplePublic` (unchecked — the view token itself is the authorization) and a hand-built minimal `{id, name, sortOrder}` projection in the public handler, deliberately not reusing `store.Person` directly since that struct also carries `sessionId`, which must never appear on this endpoint.
+- **`TotalPaidDrawer` stale prefill**: `useState(() => …)` only runs on first mount; since the drawer component instance persists across open/close (only `Drawer.Root`'s `open` prop toggles), reopening it after the subtotal changed still showed the old value. Fixed with a `useEffect` that resyncs the input whenever `open` becomes true.
+- **Results screen line-item / header mismatch**: `PersonResultCard`'s per-dish line items showed the raw pre-tip subtotal share, while the header total was the tip-scaled final amount — so "$8 + $6" was displayed above a "$15.56" total. Fixed by scaling each line item by the same `totalPaid/subtotal` factor as the header.
+- **LLM JSON field naming**: reconciled snake_case (`price_cents`) to camelCase (`priceCents`) across the Go struct tags, the JSON schema sent to the model, and the frontend types, so the whole API is consistently camelCase (caught while wiring the frontend's `api.ts` types against the actual backend response).
 
 ## 13. Prod hardening
 - [ ] nginx same-origin proxy prod build

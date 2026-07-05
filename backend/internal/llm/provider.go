@@ -8,12 +8,12 @@ import "context"
 
 type ExtractedItem struct {
 	Name       string  `json:"name"`
-	PriceCents int64   `json:"price_cents"`
+	PriceCents int64   `json:"priceCents"`
 	Quantity   float64 `json:"quantity"`
 }
 
 type ExtractedReceipt struct {
-	RestaurantName string          `json:"restaurant_name,omitempty"`
+	RestaurantName string          `json:"restaurantName,omitempty"`
 	Date           string          `json:"date,omitempty"` // best-effort ISO 8601
 	Items          []ExtractedItem `json:"items"`
 }

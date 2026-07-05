@@ -37,7 +37,7 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 		}{
 			{Message: struct {
 				Content string `json:"content"`
-			}{Content: `{"restaurant_name":"Thai Basil","date":"2026-07-05","items":[{"name":"Pad Thai","price_cents":1200,"quantity":1}]}`}},
+			}{Content: `{"restaurantName":"Thai Basil","date":"2026-07-05","items":[{"name":"Pad Thai","priceCents":1200,"quantity":1}]}`}},
 		}
 		resp.Usage.PromptTokens = 500
 		resp.Usage.CompletionTokens = 80

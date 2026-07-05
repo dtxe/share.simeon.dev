@@ -58,7 +58,7 @@ func Compute(dishes []Dish, portions []Portion, peopleIDs []string, totalPaidCen
 	}
 
 	var subtotalCents int64
-	var unassigned []string
+	unassigned := []string{}
 	lineTotal := make(map[string]int64, len(dishes))
 	for _, d := range dishes {
 		lt := d.LineTotalCents()

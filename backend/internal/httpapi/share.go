@@ -44,6 +44,22 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	people, err := s.Store.ListPeoplePublic(r.Context(), sess.ID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Map to a minimal public shape — store.Person also carries sessionId,
+	// which is exactly the internal id this endpoint must never leak.
+	publicPeople := make([]map[string]any, 0, len(people))
+	for _, p := range people {
+		publicPeople = append(publicPeople, map[string]any{
+			"id":        p.ID,
+			"name":      p.Name,
+			"sortOrder": p.SortOrder,
+		})
+	}
+
 	// Deliberately built by hand (not sessionSummary()) so the internal
 	// session UUID and any future field added to the owner-facing summary
 	// don't leak here just because someone forgot to update this endpoint.
@@ -54,6 +70,7 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 		"subtotalCents":  sess.SubtotalCents,
 		"totalPaidCents": sess.TotalPaidCents,
 		"hasReceipt":     sess.ReceiptImagePath != nil,
+		"people":         publicPeople,
 		"result":         result,
 	})
 }

@@ -21,7 +21,8 @@ import (
 
 const extractionPrompt = `You are extracting structured data from a photo of a restaurant receipt.
 Return the restaurant name, the date (ISO 8601, best effort), and every line item with its name,
-price in integer cents, and quantity. If a field can't be determined, omit it rather than guessing wildly.`
+price in integer cents, and quantity. If a field can't be determined, omit it rather than guessing wildly.
+Respond using exactly these JSON field names: restaurantName, date, items (each with name, priceCents, quantity).`
 
 type Client struct {
 	BaseURL    string
@@ -89,18 +90,18 @@ type chatResponse struct {
 var extractionSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
-		"restaurant_name": map[string]any{"type": "string"},
-		"date":            map[string]any{"type": "string"},
+		"restaurantName": map[string]any{"type": "string"},
+		"date":           map[string]any{"type": "string"},
 		"items": map[string]any{
 			"type": "array",
 			"items": map[string]any{
 				"type": "object",
 				"properties": map[string]any{
-					"name":        map[string]any{"type": "string"},
-					"price_cents": map[string]any{"type": "integer"},
-					"quantity":    map[string]any{"type": "number"},
+					"name":       map[string]any{"type": "string"},
+					"priceCents": map[string]any{"type": "integer"},
+					"quantity":   map[string]any{"type": "number"},
 				},
-				"required": []string{"name", "price_cents", "quantity"},
+				"required": []string{"name", "priceCents", "quantity"},
 			},
 		},
 	},

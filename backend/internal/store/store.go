@@ -103,7 +103,7 @@ func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]
 	}
 	defer rows.Close()
 
-	var out []BillSession
+	out := []BillSession{}
 	for rows.Next() {
 		var b BillSession
 		b.OwnerUserID = ownerUserID
@@ -251,6 +251,17 @@ func (s *Store) ListPeople(ctx context.Context, sessionID, ownerUserID string) (
 	if _, err := s.GetSession(ctx, sessionID, ownerUserID); err != nil {
 		return nil, err
 	}
+	return s.listPeopleUnchecked(ctx, sessionID)
+}
+
+// ListPeoplePublic is for the public share view: the caller has already
+// proven authorization by presenting a valid view token (see
+// GetByViewToken), so there's no separate owner to check here.
+func (s *Store) ListPeoplePublic(ctx context.Context, sessionID string) ([]Person, error) {
+	return s.listPeopleUnchecked(ctx, sessionID)
+}
+
+func (s *Store) listPeopleUnchecked(ctx context.Context, sessionID string) ([]Person, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT id::text, name, sort_order FROM people
 		WHERE session_id = $1 ORDER BY sort_order
@@ -259,7 +270,7 @@ func (s *Store) ListPeople(ctx context.Context, sessionID, ownerUserID string) (
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Person
+	out := []Person{}
 	for rows.Next() {
 		var p Person
 		p.SessionID = sessionID
@@ -346,7 +357,7 @@ func (s *Store) ListDishes(ctx context.Context, sessionID, ownerUserID string) (
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Dish
+	out := []Dish{}
 	for rows.Next() {
 		var d Dish
 		d.SessionID = sessionID
@@ -569,7 +580,7 @@ func (s *Store) ListPortions(ctx context.Context, sessionID, ownerUserID string)
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Portion
+	out := []Portion{}
 	for rows.Next() {
 		var p Portion
 		if err := rows.Scan(&p.DishID, &p.PersonID, &p.Shares); err != nil {
