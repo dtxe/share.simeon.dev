@@ -60,6 +60,10 @@ func (l *Limiter) AllowOTPRequestPerIP(ctx context.Context, ip string, maxPerHou
 	return l.Allow(ctx, "rl:otp_request:"+ip, maxPerHour, time.Hour)
 }
 
+func (l *Limiter) AllowOTPVerifyPerIP(ctx context.Context, ip string, maxPerHour int) (bool, error) {
+	return l.Allow(ctx, "rl:otp_verify:"+ip, maxPerHour, time.Hour)
+}
+
 func (l *Limiter) AllowInvalidViewTokenPerIP(ctx context.Context, ip string) (bool, error) {
 	return l.Allow(ctx, "rl:bad_view_token:"+ip, 30, time.Minute)
 }

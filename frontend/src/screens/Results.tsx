@@ -1,10 +1,11 @@
 import { useState } from 'react'
 import { useParams, useLocation } from 'wouter'
 import { useMutation, useQuery } from '@tanstack/react-query'
+import { NotAuthorized } from '../components/NotAuthorized'
 import { StepHeader } from '../components/StepHeader'
 import { PersonResultCard } from '../components/PersonResultCard'
 import { ShareLinkDrawer } from '../components/ShareLinkDrawer'
-import { api } from '../lib/api'
+import { api, isAuthError } from '../lib/api'
 import { formatCents } from '../lib/split'
 
 export default function ResultsScreen() {
@@ -13,8 +14,12 @@ export default function ResultsScreen() {
   const [shareOpen, setShareOpen] = useState(false)
   const [shareUrl, setShareUrl] = useState<string | null>(null)
 
-  const { data: detail } = useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id!), enabled: !!id })
-  const { data: breakdown } = useQuery({
+  const { data: detail, error: detailError } = useQuery({
+    queryKey: ['session', id],
+    queryFn: () => api.getSession(id!),
+    enabled: !!id,
+  })
+  const { data: breakdown, error: breakdownError } = useQuery({
     queryKey: ['breakdown', id],
     queryFn: () => api.getBreakdown(id!),
     enabled: !!id,
@@ -27,6 +32,8 @@ export default function ResultsScreen() {
       setShareOpen(true)
     },
   })
+
+  if (isAuthError(detailError) || isAuthError(breakdownError)) return <NotAuthorized />
 
   if (!detail || !breakdown) {
     return (

@@ -41,12 +41,20 @@ func NewRouter(s *Server) http.Handler {
 	})
 
 	r.Route("/api", func(api chi.Router) {
-		api.Use(s.Auth.Identify)
+		// CSRF defense-in-depth: SameSite=Lax cookies alone aren't
+		// sufficient (see docs), so reject any unsafe-method request that
+		// isn't same-origin and carrying the header a cross-site HTML form
+		// can't set.
+		api.Use(requireSameOrigin(s.Cfg))
+		// IP rate limit runs first — it only needs the raw request, not an
+		// identified session — so abusive traffic gets rejected before
+		// Identify can auto-provision an anonymous user+session row for it.
 		api.Use(s.globalRateLimit)
+		api.Use(s.Auth.Identify)
 		api.Get("/me", s.handleMe)
 
 		api.With(s.rateLimitOTPRequest).Post("/auth/otp/request", s.handleOTPRequest)
-		api.Post("/auth/otp/verify", s.handleOTPVerify)
+		api.With(s.rateLimitOTPVerify).Post("/auth/otp/verify", s.handleOTPVerify)
 		api.Post("/auth/logout", s.handleLogout)
 
 		api.Post("/auth/passkey/register/options", s.handlePasskeyRegisterOptions)
@@ -87,11 +95,42 @@ func NewRouter(s *Server) http.Handler {
 	return r
 }
 
+// requireSameOrigin rejects unsafe-method requests unless the Origin header
+// matches the configured frontend origin and an X-Requested-With header is
+// present. A cross-site HTML form can send neither reliably (no way to set
+// custom headers, and the browser sets Origin to the attacker's own site),
+// so this blocks classic CSRF even though SameSite=Lax cookies are also in
+// play as a second layer.
+func requireSameOrigin(cfg *config.Config) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.Method {
+			case http.MethodGet, http.MethodHead, http.MethodOptions:
+				next.ServeHTTP(w, r)
+				return
+			}
+			if cfg.CORSAllowedOrigin != "" {
+				if origin := r.Header.Get("Origin"); origin != cfg.CORSAllowedOrigin {
+					writeJSONError(w, http.StatusForbidden, "invalid origin")
+					return
+				}
+			}
+			if r.Header.Get("X-Requested-With") == "" {
+				writeJSONError(w, http.StatusForbidden, "missing csrf header")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 func securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
+		w.Header().Set("Content-Security-Policy", "default-src 'none'; frame-ancestors 'none'")
+		w.Header().Set("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
 		next.ServeHTTP(w, r)
 	})
 }

@@ -369,14 +369,17 @@ func (s *Store) ListDishes(ctx context.Context, sessionID, ownerUserID string) (
 	return out, rows.Err()
 }
 
-// UpsertPortion sets (dishID, personID)'s share count, scoped to a dish that
-// belongs to a session the caller owns.
+// UpsertPortion sets (dishID, personID)'s share count. Scoped to a dish that
+// belongs to a session the caller owns, AND to a person in that same
+// session — otherwise a known person UUID from a different user's bill
+// could be cross-linked in via IDOR.
 func (s *Store) UpsertPortion(ctx context.Context, dishID, personID, ownerUserID string, shares float64) error {
 	tag, err := s.Pool.Exec(ctx, `
 		INSERT INTO portions (dish_id, person_id, shares)
 		SELECT $1, $2, $4
 		FROM dishes
 		JOIN bill_sessions ON bill_sessions.id = dishes.session_id
+		JOIN people ON people.id = $2 AND people.session_id = dishes.session_id
 		WHERE dishes.id = $1 AND bill_sessions.owner_user_id = $3
 		ON CONFLICT (dish_id, person_id) DO UPDATE SET shares = $4, updated_at = now()
 	`, dishID, personID, ownerUserID, shares)

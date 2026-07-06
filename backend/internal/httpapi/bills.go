@@ -328,6 +328,14 @@ func (s *Server) handleUpdateDish(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "unitPriceCents out of range")
 		return
 	}
+	if body.Name != nil && (len(*body.Name) < 1 || len(*body.Name) > 100) {
+		writeJSONError(w, http.StatusBadRequest, "dish name must be 1-100 characters")
+		return
+	}
+	if body.Quantity != nil && *body.Quantity <= 0 {
+		writeJSONError(w, http.StatusBadRequest, "quantity must be positive")
+		return
+	}
 	if err := s.Store.UpdateDish(r.Context(), chi.URLParam(r, "dishId"), userID, body.Name, body.UnitPriceCents, body.Quantity); err != nil {
 		storeErrToStatus(w, err)
 		return

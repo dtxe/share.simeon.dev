@@ -10,16 +10,32 @@ import (
 	"share/backend/internal/auth"
 )
 
+const (
+	maxOTPBodyBytes = 1 << 10 // 1KiB — an email + 6-digit code never needs more
+	maxEmailLen     = 254     // RFC 5321 max mailbox length
+	maxOTPCodeLen   = 16
+)
+
 type otpRequestBody struct {
 	Email string `json:"email"`
 }
 
 func (s *Server) handleOTPRequest(w http.ResponseWriter, r *http.Request) {
+	if !s.Cfg.EmailOTPEnabled {
+		http.NotFound(w, r)
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxOTPBodyBytes)
 	var body otpRequestBody
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(body.Email) > maxEmailLen {
+		writeJSONError(w, http.StatusBadRequest, "invalid email")
 		return
 	}
 
@@ -46,16 +62,26 @@ type otpVerifyBody struct {
 }
 
 func (s *Server) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
+	if !s.Cfg.EmailOTPEnabled {
+		http.NotFound(w, r)
+		return
+	}
+
 	userID, ok := auth.UserID(r.Context())
 	if !ok {
 		writeJSONError(w, http.StatusUnauthorized, "unauthorized")
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, maxOTPBodyBytes)
 	var body otpVerifyBody
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(body.Email) > maxEmailLen || len(body.Code) > maxOTPCodeLen {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -66,7 +92,7 @@ func (s *Server) handleOTPVerify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_, err = s.Auth.VerifyOTP(r.Context(), userID, addr.Address, strings.TrimSpace(body.Code))
+	_, err = s.Auth.VerifyOTP(r.Context(), w, r, userID, addr.Address, strings.TrimSpace(body.Code))
 	switch {
 	case err == nil:
 		w.WriteHeader(http.StatusOK)

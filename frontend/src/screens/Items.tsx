@@ -2,8 +2,9 @@ import { useEffect, useState } from 'react'
 import { useParams, useLocation } from 'wouter'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Sparkles, Trash2 } from 'lucide-react'
+import { NotAuthorized } from '../components/NotAuthorized'
 import { StepHeader } from '../components/StepHeader'
-import { api, type Dish } from '../lib/api'
+import { api, isAuthError, type Dish } from '../lib/api'
 import { formatCents } from '../lib/split'
 
 interface DraftDish {
@@ -21,7 +22,7 @@ export default function ItemsScreen() {
   const [, navigate] = useLocation()
   const qc = useQueryClient()
 
-  const { data } = useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id!), enabled: !!id })
+  const { data, error } = useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id!), enabled: !!id })
   const [draft, setDraft] = useState<DraftDish[]>([])
   const [hydrated, setHydrated] = useState(false)
   const [extracting, setExtracting] = useState(false)
@@ -51,6 +52,8 @@ export default function ItemsScreen() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['session', id] }),
   })
 
+  if (isAuthError(error)) return <NotAuthorized />
+
   function commit(next: DraftDish[]) {
     setDraft(next)
     save.mutate(next)
@@ -74,12 +77,16 @@ export default function ItemsScreen() {
     setExtractError(null)
     try {
       const result = await api.extract(id!)
-      const extracted = result.items.map((it) => ({
-        name: it.name,
-        priceDollars: (it.priceCents / 100).toFixed(2),
-        quantity: it.quantity,
-      }))
-      commit(extracted)
+      // Backend already persisted these (extraction endpoint saves server-side
+      // now) — just reflect them locally, don't re-save via the manual-entry path.
+      const extracted = result.items
+        .filter((it) => it.name.trim().length > 0)
+        .map((it) => ({
+          name: it.name,
+          priceDollars: (it.priceCents / 100).toFixed(2),
+          quantity: it.quantity,
+        }))
+      setDraft(extracted)
       const sum = result.items.reduce((s, it) => s + it.priceCents * it.quantity, 0)
       qc.invalidateQueries({ queryKey: ['session', id] })
       setMismatchWarning(sum === 0 ? 'No items detected — try manual entry.' : null)

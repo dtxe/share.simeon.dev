@@ -13,11 +13,13 @@ import (
 //   - No collision: `email` isn't attached to anyone else — attach it to
 //     currentUserID in place. Nothing else moves.
 //   - Collision: `email` already belongs to a different user row (e.g. a
-//     second device verifying the same address). Fold currentUserID's bills,
-//     passkeys, and sessions onto the existing row and delete the
-//     now-empty one. This repoints every session — including the one making
-//     this very request — so the calling browser stays logged in, now under
-//     the canonical row.
+//     second device verifying the same address). Fold currentUserID's bills
+//     and passkeys onto the existing row and delete the now-empty one.
+//     Sessions are deliberately NOT repointed — currentUserID's sessions
+//     (including the pre-auth one making this request) cascade-delete with
+//     the row, so a fixed/stolen anonymous token can't ride along as an
+//     authenticated session. Callers must issue a fresh session for the
+//     returned identity.
 //
 // Either way, callers should treat the return value as the caller's
 // possibly-new identity going forward.
@@ -56,14 +58,13 @@ func (m *Manager) AttachEmailOrMerge(ctx context.Context, currentUserID, email s
 		return currentUserID, nil
 	}
 
-	// Collision: fold currentUserID into existingID.
+	// Collision: fold currentUserID into existingID. Sessions are not moved
+	// — DELETE FROM users cascades and kills currentUserID's session(s), so
+	// the pre-auth token is dead once this returns.
 	if _, err := tx.Exec(ctx, `UPDATE bill_sessions SET owner_user_id = $1 WHERE owner_user_id = $2`, existingID, currentUserID); err != nil {
 		return "", err
 	}
 	if _, err := tx.Exec(ctx, `UPDATE webauthn_credentials SET user_id = $1 WHERE user_id = $2`, existingID, currentUserID); err != nil {
-		return "", err
-	}
-	if _, err := tx.Exec(ctx, `UPDATE sessions SET user_id = $1 WHERE user_id = $2`, existingID, currentUserID); err != nil {
 		return "", err
 	}
 	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, currentUserID); err != nil {
@@ -114,9 +115,9 @@ func (m *Manager) MergeAnonymousInto(ctx context.Context, sourceUserID, targetUs
 	if _, err := tx.Exec(ctx, `UPDATE bill_sessions SET owner_user_id = $1 WHERE owner_user_id = $2`, targetUserID, sourceUserID); err != nil {
 		return false, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE sessions SET user_id = $1 WHERE user_id = $2`, targetUserID, sourceUserID); err != nil {
-		return false, err
-	}
+	// Sessions are not moved — DELETE FROM users cascades and kills
+	// sourceUserID's session(s), so the pre-auth anonymous token dies here
+	// instead of surviving as a session on the target account.
 	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, sourceUserID); err != nil {
 		return false, err
 	}

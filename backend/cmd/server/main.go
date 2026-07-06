@@ -2,8 +2,13 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
+	"os"
+	"os/signal"
+	"syscall"
+	"time"
 
 	"share/backend/internal/auth"
 	"share/backend/internal/cleanup"
@@ -53,11 +58,12 @@ func main() {
 	switch cfg.EmailProvider {
 	case "smtp":
 		emailProvider = &email.SMTPProvider{
-			Host: cfg.SMTPHost,
-			Port: cfg.SMTPPort,
-			User: cfg.SMTPUser,
-			Pass: cfg.SMTPPass,
-			From: cfg.SMTPFrom,
+			Host:    cfg.SMTPHost,
+			Port:    cfg.SMTPPort,
+			User:    cfg.SMTPUser,
+			Pass:    cfg.SMTPPass,
+			From:    cfg.SMTPFrom,
+			TLSMode: cfg.SMTPTLSMode,
 		}
 	default:
 		log.Fatalf("unknown EMAIL_PROVIDER %q", cfg.EmailProvider)
@@ -91,8 +97,30 @@ func main() {
 		Receipts: rs,
 	})
 
-	log.Printf("listening on %s", cfg.HTTPAddr)
-	if err := http.ListenAndServe(cfg.HTTPAddr, router); err != nil {
-		log.Fatal(err)
+	srv := &http.Server{
+		Addr:              cfg.HTTPAddr,
+		Handler:           router,
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      90 * time.Second, // covers the 60s LLM extraction call
+
+		IdleTimeout:       120 * time.Second,
+	}
+
+	go func() {
+		log.Printf("listening on %s", cfg.HTTPAddr)
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			log.Fatal(err)
+		}
+	}()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGTERM, syscall.SIGINT)
+	<-sigCh
+
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		log.Printf("shutdown: %v", err)
 	}
 }

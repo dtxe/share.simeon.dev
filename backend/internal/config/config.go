@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"log"
 	"net/url"
 	"os"
 	"strconv"
@@ -43,6 +44,8 @@ type Config struct {
 	OTPMaxAttempts           int
 	OTPResendCooldownSeconds int
 	OTPRequestRatePerIPPerHr int
+	OTPVerifyRatePerIPPerHr  int
+	OTPHashPepper            string
 
 	EmailProvider string
 	SMTPHost      string
@@ -50,6 +53,7 @@ type Config struct {
 	SMTPUser      string
 	SMTPPass      string
 	SMTPFrom      string
+	SMTPTLSMode   string
 
 	LLMProvider             string
 	LLMBaseURL              string
@@ -59,6 +63,8 @@ type Config struct {
 	LLMDailySpendCapCents   int
 
 	UploadDir string
+
+	Debug bool
 }
 
 // Load reads configuration from the environment. Any FOO env var may instead
@@ -84,7 +90,7 @@ func Load() (*Config, error) {
 		AnonIdentityTransport:     getEnv("ANON_IDENTITY_TRANSPORT", "cookie"),
 		AnonSessionCookieName:     getEnv("ANON_SESSION_COOKIE_NAME", "share_sid"),
 		AnonSessionHeaderName:     getEnv("ANON_SESSION_HEADER_NAME", "X-Anon-Session-Token"),
-		AnonSessionTTLDays:        getInt("ANON_SESSION_TTL_DAYS", 730),
+		AnonSessionTTLDays:        getInt("ANON_SESSION_TTL_DAYS", 30),
 		SessionTouchMinIntervalHr: getInt("SESSION_TOUCH_MIN_INTERVAL_HOURS", 24),
 
 		PasskeyAccountsEnabled: getBool("PASSKEY_ACCOUNTS_ENABLED", false),
@@ -97,13 +103,16 @@ func Load() (*Config, error) {
 		OTPMaxAttempts:           getInt("OTP_MAX_ATTEMPTS", 5),
 		OTPResendCooldownSeconds: getInt("OTP_RESEND_COOLDOWN_SECONDS", 60),
 		OTPRequestRatePerIPPerHr: getInt("OTP_REQUEST_RATE_PER_IP_PER_HOUR", 10),
+		OTPVerifyRatePerIPPerHr:  getInt("OTP_VERIFY_RATE_PER_IP_PER_HOUR", 30),
+		OTPHashPepper:            getEnv("OTP_HASH_PEPPER", ""),
 
 		EmailProvider: getEnv("EMAIL_PROVIDER", "smtp"),
 		SMTPHost:      getEnv("SMTP_HOST", ""),
-		SMTPPort:      getInt("SMTP_PORT", 1025),
+		SMTPPort:      getInt("SMTP_PORT", 587),
 		SMTPUser:      getEnv("SMTP_USER", ""),
 		SMTPPass:      getEnv("SMTP_PASS", ""),
-		SMTPFrom:      getEnv("SMTP_FROM", "share@localhost"),
+		SMTPFrom:      getEnv("SMTP_FROM", ""),
+		SMTPTLSMode:   getEnv("SMTP_TLS_MODE", "starttls"),
 
 		LLMProvider:             getEnv("LLM_PROVIDER", "fireworks"),
 		LLMBaseURL:              getEnv("LLM_BASE_URL", "https://api.fireworks.ai/inference/v1"),
@@ -113,6 +122,8 @@ func Load() (*Config, error) {
 		LLMDailySpendCapCents:   getInt("LLM_DAILY_SPEND_CAP_CENTS", 100),
 
 		UploadDir: getEnv("UPLOAD_DIR", "/data/uploads"),
+
+		Debug: getBool("DEBUG", false),
 	}
 
 	if cfg.DatabaseURL == "" {
@@ -128,18 +139,39 @@ func Load() (*Config, error) {
 	if cfg.AnonIdentityTransport != "cookie" && cfg.AnonIdentityTransport != "header" {
 		return nil, fmt.Errorf("ANON_IDENTITY_TRANSPORT must be 'cookie' or 'header', got %q", cfg.AnonIdentityTransport)
 	}
+	if cfg.EmailOTPEnabled {
+		if cfg.OTPHashPepper == "" {
+			return nil, fmt.Errorf("OTP_HASH_PEPPER[_FILE] is required when EMAIL_OTP_ENABLED=true")
+		}
+		if cfg.EmailProvider != "smtp" {
+			return nil, fmt.Errorf("EMAIL_PROVIDER must be 'smtp', got %q", cfg.EmailProvider)
+		}
+		if cfg.SMTPHost == "" || cfg.SMTPFrom == "" || cfg.SMTPUser == "" || cfg.SMTPPass == "" {
+			return nil, fmt.Errorf("SMTP_HOST, SMTP_FROM, SMTP_USER, and SMTP_PASS[_FILE] are required when EMAIL_OTP_ENABLED=true")
+		}
+		if cfg.SMTPPort <= 0 || cfg.SMTPPort > 65535 {
+			return nil, fmt.Errorf("SMTP_PORT must be between 1 and 65535")
+		}
+		if cfg.SMTPTLSMode != "starttls" && cfg.SMTPTLSMode != "smtps" {
+			return nil, fmt.Errorf("SMTP_TLS_MODE must be 'starttls' or 'smtps', got %q", cfg.SMTPTLSMode)
+		}
+	}
 
 	return cfg, nil
 }
 
 // getEnv resolves FOO from the environment, preferring FOO_FILE (whose
 // contents are read and trimmed) when present, for docker-secrets support.
+// A FOO_FILE that's set but unreadable is a misconfiguration, not a signal
+// to silently fall through to FOO/the default — that would mask a broken
+// secret mount as if it were simply unset.
 func getEnv(key, def string) string {
 	if filePath := os.Getenv(key + "_FILE"); filePath != "" {
 		b, err := os.ReadFile(filePath)
-		if err == nil {
-			return strings.TrimSpace(string(b))
+		if err != nil {
+			log.Fatalf("config: reading %s_FILE (%s): %v", key, filePath, err)
 		}
+		return strings.TrimSpace(string(b))
 	}
 	if v := os.Getenv(key); v != "" {
 		return v
@@ -154,7 +186,7 @@ func getBool(key string, def bool) bool {
 	}
 	b, err := strconv.ParseBool(v)
 	if err != nil {
-		return def
+		log.Fatalf("config: %s: invalid bool %q: %v", key, v, err)
 	}
 	return b
 }
@@ -166,7 +198,7 @@ func getInt(key string, def int) int {
 	}
 	n, err := strconv.Atoi(v)
 	if err != nil {
-		return def
+		log.Fatalf("config: %s: invalid int %q: %v", key, v, err)
 	}
 	return n
 }
@@ -178,7 +210,7 @@ func getFloat(key string, def float64) float64 {
 	}
 	f, err := strconv.ParseFloat(v, 64)
 	if err != nil {
-		return def
+		log.Fatalf("config: %s: invalid float %q: %v", key, v, err)
 	}
 	return f
 }

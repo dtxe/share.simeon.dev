@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { useInvalidateMe } from '../auth/useMe'
+import { api, ApiError } from '../lib/api'
 import { createPasskey, getPasskeyAssertion, supportsPasskeys } from '../lib/passkey'
 
 type Stage = 'closed' | 'email' | 'code'
@@ -37,36 +38,24 @@ export function SaveHistoryBanner() {
 
   async function requestCode() {
     setError(null)
-    const res = await fetch('/api/auth/otp/request', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      setError(body.error ?? 'could not send code')
-      return
+    try {
+      await api.requestOtp(email)
+      setStage('code')
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'could not send code')
     }
-    setStage('code')
   }
 
   async function verifyCode() {
     setError(null)
-    const res = await fetch('/api/auth/otp/verify', {
-      method: 'POST',
-      credentials: 'include',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email, code }),
-    })
-    if (!res.ok) {
-      const body = await res.json().catch(() => ({}))
-      setError(body.error ?? 'invalid code')
-      return
+    try {
+      await api.verifyOtp(email, code)
+      invalidateMe()
+      setStage('closed')
+      setDismissed(true)
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : 'invalid code')
     }
-    invalidateMe()
-    setStage('closed')
-    setDismissed(true)
   }
 
   if (stage === 'closed') {

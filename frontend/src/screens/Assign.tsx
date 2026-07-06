@@ -1,12 +1,13 @@
 import { useMemo, useState } from 'react'
 import { useParams, useLocation } from 'wouter'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { NotAuthorized } from '../components/NotAuthorized'
 import { StepHeader } from '../components/StepHeader'
 import { DishRow } from '../components/DishRow'
 import { PeopleRail } from '../components/PeopleRail'
 import { TotalPaidDrawer } from '../components/TotalPaidDrawer'
 import { useAssignSelection } from '../state/assignSelection'
-import { api, type Person, type Dish, type Portion } from '../lib/api'
+import { api, isAuthError, type Person, type Dish, type Portion } from '../lib/api'
 import { previewOwed, unassignedDishIds, formatCents } from '../lib/split'
 
 const EMPTY_PEOPLE: Person[] = []
@@ -20,7 +21,7 @@ export default function AssignScreen() {
   const [totalPaidOpen, setTotalPaidOpen] = useState(false)
   const [confirmUnassigned, setConfirmUnassigned] = useState(false)
 
-  const { data } = useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id!), enabled: !!id })
+  const { data, error } = useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id!), enabled: !!id })
   const { selectedDishId, selectedPersonId, selectDish, selectPerson, clearSelection } = useAssignSelection()
 
   const upsert = useMutation({
@@ -70,6 +71,8 @@ export default function AssignScreen() {
   const activePerson = people.find((p) => p.id === selectedPersonId) ?? null
   const unassigned = unassignedDishIds(dishes, portions)
   const assignedCount = dishes.length - unassigned.length
+
+  if (isAuthError(error)) return <NotAuthorized />
 
   function adjust(dishId: string, personId: string, delta: number) {
     const current = sharesByDish[dishId]?.[personId] ?? 0

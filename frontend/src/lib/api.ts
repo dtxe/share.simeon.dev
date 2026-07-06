@@ -61,10 +61,33 @@ class ApiError extends Error {
   }
 }
 
+// The backend is the real authorization boundary (owner checks on every
+// bill route) — this just lets screens recognize a 401/403 from a query and
+// show something better than a stuck loading state.
+export function isAuthError(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 401 || err.status === 403)
+}
+
+// Non-GET requests carry this header so the backend's Origin+header CSRF
+// check (relied on since SameSite=Lax cookies alone aren't sufficient) can
+// tell a same-origin fetch/XHR apart from a cross-site HTML form post —
+// forms can't set custom headers, but this can't be spoofed cross-origin
+// without triggering a CORS preflight that our origin allowlist blocks.
+const CSRF_HEADERS = { 'X-Requested-With': 'XMLHttpRequest' }
+
+// Dynamic path segments (session/person/dish ids, share tokens) come from
+// route params or server responses — encode them so a value containing
+// `/`, `?`, `#`, etc. can't reshape the request path.
+function enc(segment: string): string {
+  return encodeURIComponent(segment)
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const method = (init?.method ?? 'GET').toUpperCase()
+  const csrfHeaders = method === 'GET' || method === 'HEAD' ? {} : CSRF_HEADERS
   const res = await fetch(`/api${path}`, {
     credentials: 'include',
-    headers: { 'Content-Type': 'application/json', ...init?.headers },
+    headers: { 'Content-Type': 'application/json', ...csrfHeaders, ...init?.headers },
     ...init,
   })
   if (!res.ok) {
@@ -107,50 +130,55 @@ export const api = {
     }),
 
   createSession: () => request<SessionSummary>('/sessions', { method: 'POST' }),
-  getSession: (id: string) => request<SessionDetail>(`/sessions/${id}`),
+  getSession: (id: string) => request<SessionDetail>(`/sessions/${enc(id)}`),
   updateSession: (
     id: string,
     patch: Partial<{ title: string; restaurantName: string; billDate: string; totalPaidCents: number }>,
-  ) => request<void>(`/sessions/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  ) => request<void>(`/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   addPerson: (sessionId: string, name: string) =>
-    request<Person>(`/sessions/${sessionId}/people`, { method: 'POST', body: JSON.stringify({ name }) }),
+    request<Person>(`/sessions/${enc(sessionId)}/people`, { method: 'POST', body: JSON.stringify({ name }) }),
   renamePerson: (personId: string, name: string) =>
-    request<void>(`/people/${personId}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
-  deletePerson: (personId: string) => request<void>(`/people/${personId}`, { method: 'DELETE' }),
+    request<void>(`/people/${enc(personId)}`, { method: 'PATCH', body: JSON.stringify({ name }) }),
+  deletePerson: (personId: string) => request<void>(`/people/${enc(personId)}`, { method: 'DELETE' }),
 
   replaceDishes: (
     sessionId: string,
     dishes: { name: string; unitPriceCents: number; quantity: number; source?: string }[],
-  ) => request<Dish[]>(`/sessions/${sessionId}/dishes/bulk`, { method: 'POST', body: JSON.stringify({ dishes }) }),
-  deleteDish: (dishId: string) => request<void>(`/dishes/${dishId}`, { method: 'DELETE' }),
+  ) => request<Dish[]>(`/sessions/${enc(sessionId)}/dishes/bulk`, { method: 'POST', body: JSON.stringify({ dishes }) }),
+  deleteDish: (dishId: string) => request<void>(`/dishes/${enc(dishId)}`, { method: 'DELETE' }),
 
   upsertPortion: (dishId: string, personId: string, shares: number) =>
     request<void>('/portions', { method: 'PUT', body: JSON.stringify({ dishId, personId, shares }) }),
 
   getBreakdown: (sessionId: string) =>
-    request<{ session: SessionSummary; result: BreakdownResult }>(`/sessions/${sessionId}/breakdown`),
+    request<{ session: SessionSummary; result: BreakdownResult }>(`/sessions/${enc(sessionId)}/breakdown`),
 
   uploadReceipt: async (sessionId: string, file: File | Blob) => {
     const form = new FormData()
     form.append('receipt', file, 'receipt.jpg')
-    const res = await fetch(`/api/sessions/${sessionId}/receipt`, {
+    const res = await fetch(`/api/sessions/${enc(sessionId)}/receipt`, {
       method: 'POST',
       credentials: 'include',
+      headers: CSRF_HEADERS,
       body: form,
     })
     if (!res.ok) throw new ApiError(res.status, 'upload failed')
   },
-  receiptUrl: (sessionId: string) => `/api/sessions/${sessionId}/receipt`,
+  receiptUrl: (sessionId: string) => `/api/sessions/${enc(sessionId)}/receipt`,
+
+  requestOtp: (email: string) => request<void>('/auth/otp/request', { method: 'POST', body: JSON.stringify({ email }) }),
+  verifyOtp: (email: string, code: string) =>
+    request<void>('/auth/otp/verify', { method: 'POST', body: JSON.stringify({ email, code }) }),
 
   extract: (sessionId: string) =>
     request<{ restaurantName?: string; date?: string; items: { name: string; priceCents: number; quantity: number }[] }>(
-      `/sessions/${sessionId}/extract`,
+      `/sessions/${enc(sessionId)}/extract`,
       { method: 'POST' },
     ),
 
   createShare: (sessionId: string) =>
-    request<{ viewToken: string; shareUrl: string }>(`/sessions/${sessionId}/share`, { method: 'POST' }),
+    request<{ viewToken: string; shareUrl: string }>(`/sessions/${enc(sessionId)}/share`, { method: 'POST' }),
 
   getPublicView: (token: string) =>
     request<{
@@ -162,8 +190,8 @@ export const api = {
       hasReceipt: boolean
       people: { id: string; name: string; sortOrder: number }[]
       result: BreakdownResult
-    }>(`/view/${token}`),
-  publicReceiptUrl: (token: string) => `/api/view/${token}/receipt`,
+    }>(`/view/${enc(token)}`),
+  publicReceiptUrl: (token: string) => `/api/view/${enc(token)}/receipt`,
 }
 
 export { ApiError }

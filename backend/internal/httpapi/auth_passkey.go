@@ -8,6 +8,10 @@ import (
 	"share/backend/internal/auth"
 )
 
+// maxPasskeyBodyBytes bounds WebAuthn ceremony response JSON — real
+// attestation/assertion payloads are a few KB at most.
+const maxPasskeyBodyBytes = 64 << 10
+
 func (s *Server) handlePasskeyRegisterOptions(w http.ResponseWriter, r *http.Request) {
 	userID, ok := auth.UserID(r.Context())
 	if !ok {
@@ -34,6 +38,7 @@ func (s *Server) handlePasskeyRegisterVerify(w http.ResponseWriter, r *http.Requ
 		writeJSONError(w, http.StatusBadRequest, "missing ceremonyId")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPasskeyBodyBytes)
 	if err := s.Auth.FinishPasskeyRegistration(r.Context(), r, userID, ceremonyID); err != nil {
 		writePasskeyError(w, err)
 		return
@@ -58,6 +63,7 @@ func (s *Server) handlePasskeyLoginVerify(w http.ResponseWriter, r *http.Request
 		writeJSONError(w, http.StatusBadRequest, "missing ceremonyId")
 		return
 	}
+	r.Body = http.MaxBytesReader(w, r.Body, maxPasskeyBodyBytes)
 	if err := s.Auth.FinishPasskeyLogin(r.Context(), w, r, currentUserID, ceremonyID); err != nil {
 		writePasskeyError(w, err)
 		return

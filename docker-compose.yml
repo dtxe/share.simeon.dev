@@ -2,7 +2,7 @@ name: share
 
 services:
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16-alpine@sha256:e013e867e712fec275706a6c51c966f0bb0c93cfa8f51000f85a15f9865a28cb
     environment:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
@@ -18,17 +18,12 @@ services:
       retries: 10
 
   redis:
-    image: redis:7-alpine
+    image: redis:7-alpine@sha256:6ab0b6e7381779332f97b8ca76193e45b0756f38d4c0dcda72dbb3c32061ab99
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 5s
       retries: 10
-
-  mailpit:
-    image: axllent/mailpit:latest
-    ports:
-      - "8025:8025"
 
   backend:
     build:
@@ -42,10 +37,12 @@ services:
       DB_USER: ${POSTGRES_USER}
       DB_NAME: ${POSTGRES_DB}
       DB_PASSWORD_FILE: /run/secrets/postgres_password
+      OTP_HASH_PEPPER_FILE: /run/secrets/otp_hash_pepper
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
       SMTP_PASS_FILE: /run/secrets/smtp_pass
     secrets:
       - postgres_password
+      - otp_hash_pepper
       - llm_api_key
       - smtp_pass
     depends_on:
@@ -78,6 +75,8 @@ volumes:
 secrets:
   postgres_password:
     file: ./secrets/postgres_password.txt
+  otp_hash_pepper:
+    file: ./secrets/otp_hash_pepper.txt
   llm_api_key:
     file: ./secrets/llm_api_key.txt
   smtp_pass:

@@ -45,3 +45,20 @@ func (s *Server) rateLimitOTPRequest(next http.Handler) http.Handler {
 		next.ServeHTTP(w, r)
 	})
 }
+
+func (s *Server) rateLimitOTPVerify(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ip := auth.ClientIP(r, s.Cfg.TrustedProxy)
+		ok, err := s.RL.AllowOTPVerifyPerIP(r.Context(), ip, s.Cfg.OTPVerifyRatePerIPPerHr)
+		if err != nil {
+			log.Printf("ratelimit: otp verify check failed, failing open: %v", err)
+			next.ServeHTTP(w, r)
+			return
+		}
+		if !ok {
+			writeJSONError(w, http.StatusTooManyRequests, "too many requests")
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
+}

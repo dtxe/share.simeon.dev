@@ -20,7 +20,7 @@ run = "cd backend && go test ./..."
 
 [tasks."test-frontend"]
 description = "Run frontend unit tests"
-run = "cd frontend && npm test"
+run = "cd frontend && pnpm test"
 
 [tasks.build]
 description = "Build production images"

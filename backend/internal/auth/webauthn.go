@@ -224,6 +224,13 @@ func (m *Manager) FinishPasskeyLogin(ctx context.Context, w http.ResponseWriter,
 		}
 	}
 
+	// Rotate: kill whatever session made this request (pre-auth anonymous
+	// token, or a stale already-authenticated one) and issue a fresh one,
+	// so a fixed/stolen token can't ride along as an authenticated session.
+	if oldRaw, ok := m.readToken(r); ok {
+		_, _ = m.pool.Exec(ctx, `DELETE FROM sessions WHERE token_hash = $1`, hashToken(oldRaw))
+	}
+
 	raw, _, err := m.CreateSessionFor(ctx, r, resolvedUserID)
 	if err != nil {
 		return err

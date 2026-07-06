@@ -18,7 +18,7 @@ Three design passes ran in parallel up front: overall architecture, frontend UI/
 
 Redis is used narrowly for rate-limit and LLM-spend-cap counters only (ephemeral, no backup needed). Users, sessions, OTP codes, and passkey credentials live in Postgres — deliberately, since the app's fixed stack is Go + Postgres and none of that identity data needs Redis's properties.
 
-Dev environment: **mise** pins Go/Node versions and defines dev tasks, on top of docker compose as the actual runtime. A local SMTP catcher (mailpit) lets OTP emails be read in dev without real email credentials.
+Dev environment: **mise** pins Go/Node versions and defines dev tasks, on top of docker compose as the actual runtime. OTP emails require a configured SMTP relay in every environment.
 
 ## Repo Layout
 
@@ -26,7 +26,7 @@ Dev environment: **mise** pins Go/Node versions and defines dev tasks, on top of
 /srv/cher-app
 ├── .mise.toml                  # pins go, node; [tasks] for dev/build/migrate/test
 ├── docker-compose.yml
-├── docker-compose.override.yml # dev hot-reload bind mounts, mailpit
+├── docker-compose.override.yml # dev hot-reload bind mounts
 ├── .env.example
 ├── secrets/                    # gitignored; docker secrets (SMTP password, LLM key, DB creds)
 ├── .gitignore / .dockerignore  # must exclude .env, secrets/
@@ -232,7 +232,7 @@ type Provider interface {
     SendOTP(ctx context.Context, to, code string) error
 }
 ```
-Default: SMTP — works against any real provider's relay (SES/Postmark/Sendgrid) with zero code change, and against **mailpit** in dev.
+Default: SMTP — works against any real provider's relay (SES/Postmark/Sendgrid) with zero code change. A real relay is required in dev too.
 
 **Receipt upload pipeline** (`internal/receipts`): `http.MaxBytesReader` 10MiB cap → `http.DetectContentType` on first 512 bytes (ignore client Content-Type/extension) → `image.DecodeConfig` dimension check (reject >40MP) → full decode + **re-encode to JPEG q80** (strips EXIF/GPS, neutralizes polyglot files) → store as `{uuid}.jpg`, filename never derived from client input.
 
@@ -267,7 +267,7 @@ Default: SMTP — works against any real provider's relay (SES/Postmark/Sendgrid
 
 ## Build Order
 
-1. `.mise.toml` + repo scaffold + `docker-compose.yml` (postgres, redis, mailpit, backend health endpoint)
+1. `.mise.toml` + repo scaffold + `docker-compose.yml` (postgres, redis, backend health endpoint)
 2. `0001_identity.sql` + `internal/auth/session.go` (cookie-based, anonymous auto-provision) + `Identify` middleware — a working "hit any endpoint, get an anonymous identity" loop before anything else
 3. `0002_bills.sql` + `store` CRUD + `internal/split` with unit tests (correctness-critical, testable independent of frontend/LLM/auth extras)
 4. OTP (`internal/email` + `internal/auth/otp.go`) and merge logic (`internal/auth/merge.go`)
@@ -284,11 +284,11 @@ Default: SMTP — works against any real provider's relay (SES/Postmark/Sendgrid
 ## Verification
 
 - `internal/split` unit tests: even split, uneven shares, zero-share (unassigned) dish, rounding reconciliation (owed amounts sum exactly to `total_paid`)
-- Identity loop in dev: hit `GET /api/me` cold, confirm a cookie + anonymous user appear with no client action required; create a bill, confirm it's in `GET /api/me/bills`; request an OTP, read the code from mailpit, verify, confirm the *same* bill now shows `hasEmail: true` with no data loss; simulate the collision case (two anonymous identities verifying the same email) and confirm they merge into one bill history
+- Identity loop in dev: hit `GET /api/me` cold, confirm a cookie + anonymous user appear with no client action required; create a bill, confirm it's in `GET /api/me/bills`; request an OTP through the configured SMTP relay, verify it, confirm the *same* bill now shows `hasEmail: true` with no data loss; simulate the collision case (two anonymous identities verifying the same email) and confirm they merge into one bill history
 - If `PASSKEY_ACCOUNTS_ENABLED=true`: register a passkey on an anonymous identity, confirm login via that passkey from a fresh session lands on the same user/history
 - Manual curl smoke test of `internal/llm` Fireworks client against 2-3 real receipt photos before wiring to the upload endpoint
 - `internal/ratelimit` tests against real Redis confirming per-IP windows reset and the daily spend cap actually blocks once the configured cent threshold is hit
-- `docker compose up` brings up postgres+redis+mailpit+backend+frontend; full flow with zero login: create a session, upload a receipt, confirm extraction, assign shares, fetch breakdown, create a share link, load `/s/:token` in an incognito window and confirm it renders with no cookies sent and exposes no owner id or internal token
+- `docker compose up` brings up postgres+redis+backend+frontend; full flow with zero login: create a session, upload a receipt, confirm extraction, assign shares, fetch breakdown, create a share link, load `/s/:token` in an incognito window and confirm it renders with no cookies sent and exposes no owner id or internal token
 - Confirm a second, unrelated anonymous identity gets 404 on someone else's bill id, not data leakage
 - Set `ANON_ACCOUNTS_ENABLED=false` and confirm every route now 401s without a session, to validate the operator escape hatch works
 - Manually test the Assign screen on an actual narrow mobile viewport (devtools device emulation at minimum) for the focus+rail interaction before considering it done

@@ -13,7 +13,7 @@ Running log of decisions that aren't obvious from the code. Full original plan: 
 - **Vite + React**, Tailwind v4 + a *minimal* shadcn/ui subset (Button, Input, Drawer/vaul, Badge, Tabs) — not the full catalog, to keep bundle small. `wouter` for routing over react-router (app only has ~6 routes).
 - **mise** pins Go/Node versions and defines dev tasks; docker compose is still the actual runtime.
 - Go pinned to **1.25** (bumped up from an initial 1.22 pin once it became clear current chi/pgx/migrate/go-redis/go-webauthn releases all require 1.24+). Backend dev hot reload via `air@latest`. Backend's dev-only host port is `8081` (not `8080`) to avoid clashing with the frontend prod nginx image's `8080:80` mapping when compose merges base + override files.
-- **docker compose** services: postgres, redis, mailpit (dev-only SMTP catcher), backend, frontend.
+- **docker compose** services: postgres, redis, backend, frontend. OTP email always uses a configured real SMTP relay; no local SMTP catcher is part of the stack.
 
 ## Identity: anonymous by default, email/passkey as optional upgrades
 Went through several rounds of direction before landing here — earlier sketches (bearer edit/view token pair, then client-id header, then mandatory OTP+passkey login) are all superseded.

@@ -2,8 +2,9 @@ import { useState } from 'react'
 import { useParams, useLocation } from 'wouter'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { X } from 'lucide-react'
+import { NotAuthorized } from '../components/NotAuthorized'
 import { StepHeader } from '../components/StepHeader'
-import { api } from '../lib/api'
+import { api, isAuthError } from '../lib/api'
 import { personColor, initials } from '../lib/colors'
 
 export default function PeopleScreen() {
@@ -12,7 +13,7 @@ export default function PeopleScreen() {
   const qc = useQueryClient()
   const [name, setName] = useState('')
 
-  const { data } = useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id!), enabled: !!id })
+  const { data, error } = useQuery({ queryKey: ['session', id], queryFn: () => api.getSession(id!), enabled: !!id })
 
   const addPerson = useMutation({
     mutationFn: (n: string) => api.addPerson(id!, n),
@@ -26,6 +27,8 @@ export default function PeopleScreen() {
     mutationFn: (personId: string) => api.deletePerson(personId),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['session', id] }),
   })
+
+  if (isAuthError(error)) return <NotAuthorized />
 
   function submit(e: React.FormEvent) {
     e.preventDefault()

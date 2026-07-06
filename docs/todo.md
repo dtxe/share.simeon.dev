@@ -8,10 +8,10 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `.mise.toml` (pin go, node; tasks: dev/migrate/test-backend/test-frontend/build)
 - [x] `.gitignore` / `.dockerignore` (exclude `.env`, `secrets/`, `uploads/`, `node_modules`, build artifacts)
 - [x] `.env.example`
-- [x] `docker-compose.yml` + `docker-compose.override.yml` (postgres, redis, mailpit, backend, frontend)
+- [x] `docker-compose.yml` + `docker-compose.override.yml` (postgres, redis, backend, frontend)
 - [x] `docker/backend.Dockerfile` (dev + prod multi-stage)
 - [x] `docker/frontend.Dockerfile` (dev + prod multi-stage, Caddy same-origin proxy)
-- [x] `backend/cmd/server/main.go` health endpoint (`/healthz`) — confirmed: postgres/redis/mailpit/backend healthy, `curl /healthz` → 200, air hot reload working
+- [x] `backend/cmd/server/main.go` health endpoint (`/healthz`) — confirmed: postgres/redis/backend healthy, `curl /healthz` → 200, air hot reload working
   - note: bumped Go pin from 1.22 to 1.25 (chi/pgx/migrate/go-redis/go-webauthn all require 1.24+ now); backend dev host port moved to 8081 to avoid clashing with frontend's prod Caddy port 8080
   - note: migrations live under `backend/internal/db/migrations/` (not top-level `backend/migrations/`) since `go:embed` can't reference parent directories
 
@@ -38,7 +38,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `internal/auth/otp.go` — generate/verify, resend cooldown + max-attempts, Postgres-backed
 - [x] `internal/auth/merge.go` — `AttachEmailOrMerge` (no-collision update + collision merge w/ advisory lock)
 - [x] `POST /api/auth/otp/request`, `POST /api/auth/otp/verify`, `POST /api/auth/logout`
-- [x] Manual check: requested OTP via curl, read code from mailpit's API, verified, confirmed `hasEmail: true`; wrong code correctly 400s
+- [x] Manual check: requested OTP via curl, read code from the configured SMTP test inbox, verified, confirmed `hasEmail: true`; wrong code correctly 400s
 - [x] Manual check: simulated collision (two anon identities verify same email) — confirmed via direct SQL that both sessions repoint to one canonical `users` row, no orphaned duplicate
   - note: per-IP OTP request rate limiting deferred to step 6 (`internal/ratelimit`, not built yet) — only the per-email resend cooldown is enforced so far
 

@@ -209,10 +209,19 @@ func (m *Manager) writeToken(w http.ResponseWriter, raw string) {
 	})
 }
 
+// ClientIP trusts X-Forwarded-For only as far as our own reverse proxy: the
+// header can be a client-supplied comma-separated chain, and only the
+// *last* hop is the address our proxy itself observed on the socket — the
+// earlier entries are whatever the client chose to send and must not be
+// trusted (using the raw header, or its first entry, lets a client spoof
+// its rate-limit/audit identity for free).
 func ClientIP(r *http.Request, trustedProxy bool) string {
 	if trustedProxy {
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
-			return xff
+			parts := strings.Split(xff, ",")
+			if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {
+				return last
+			}
 		}
 	}
 	host, _, err := net.SplitHostPort(r.RemoteAddr)

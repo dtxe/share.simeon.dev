@@ -1,6 +1,18 @@
 :80 {
 	encode gzip
 
+	# Defense-in-depth headers for the production HTTPS host. HSTS is a
+	# no-op over plain http (browsers only honor it on https responses) but
+	# harmless to always send; the backend sets its own copy of the
+	# nosniff/frame/referrer headers too, in case anything ever bypasses
+	# this proxy.
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		Content-Security-Policy "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
+		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		X-Content-Type-Options "nosniff"
+	}
+
 	# handle blocks are mutually exclusive and evaluated in file order — the
 	# first match wins and nothing after it runs. This matters here: Caddy's
 	# default *directive* order runs try_files before reverse_proxy
