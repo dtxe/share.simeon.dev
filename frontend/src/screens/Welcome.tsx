@@ -71,7 +71,7 @@ export default function Welcome() {
         />
       </div>
 
-      {me && !me.hasEmail && !me.hasPasskey && <SaveHistoryBanner />}
+      {me && !me.hasPasskey && <SaveHistoryBanner />}
 
       {bills && bills.length > 0 && (
         <section>

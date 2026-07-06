@@ -52,12 +52,13 @@ func (s *Server) handlePasskeyLoginOptions(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) handlePasskeyLoginVerify(w http.ResponseWriter, r *http.Request) {
+	currentUserID, _ := auth.UserID(r.Context())
 	ceremonyID := r.URL.Query().Get("ceremonyId")
 	if ceremonyID == "" {
 		writeJSONError(w, http.StatusBadRequest, "missing ceremonyId")
 		return
 	}
-	if err := s.Auth.FinishPasskeyLogin(r.Context(), w, r, ceremonyID); err != nil {
+	if err := s.Auth.FinishPasskeyLogin(r.Context(), w, r, currentUserID, ceremonyID); err != nil {
 		writePasskeyError(w, err)
 		return
 	}

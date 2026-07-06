@@ -1,3 +1,10 @@
+import type {
+  AuthenticationResponseJSON,
+  PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON,
+  RegistrationResponseJSON,
+} from '@simplewebauthn/browser'
+
 export interface SessionSummary {
   id: string
   title: string | null
@@ -79,6 +86,25 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 export const api = {
   getMe: () => request<{ hasEmail: boolean; hasPasskey: boolean }>('/me'),
   getMyBills: () => request<SessionSummary[]>('/me/bills'),
+
+  beginPasskeyRegistration: () =>
+    request<{ ceremonyId: string; options: PublicKeyCredentialCreationOptionsJSON }>('/auth/passkey/register/options', {
+      method: 'POST',
+    }),
+  finishPasskeyRegistration: (ceremonyId: string, response: RegistrationResponseJSON) =>
+    request<void>(`/auth/passkey/register/verify?ceremonyId=${encodeURIComponent(ceremonyId)}`, {
+      method: 'POST',
+      body: JSON.stringify(response),
+    }),
+  beginPasskeyLogin: () =>
+    request<{ ceremonyId: string; options: PublicKeyCredentialRequestOptionsJSON }>('/auth/passkey/login/options', {
+      method: 'POST',
+    }),
+  finishPasskeyLogin: (ceremonyId: string, response: AuthenticationResponseJSON) =>
+    request<void>(`/auth/passkey/login/verify?ceremonyId=${encodeURIComponent(ceremonyId)}`, {
+      method: 'POST',
+      body: JSON.stringify(response),
+    }),
 
   createSession: () => request<SessionSummary>('/sessions', { method: 'POST' }),
   getSession: (id: string) => request<SessionDetail>(`/sessions/${id}`),

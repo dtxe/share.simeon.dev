@@ -1,7 +1,9 @@
 import { useState } from 'react'
 import { useInvalidateMe } from '../auth/useMe'
+import { createPasskey, getPasskeyAssertion, supportsPasskeys } from '../lib/passkey'
 
 type Stage = 'closed' | 'email' | 'code'
+type Busy = 'register' | 'login' | null
 
 export function SaveHistoryBanner() {
   const [stage, setStage] = useState<Stage>('closed')
@@ -9,9 +11,29 @@ export function SaveHistoryBanner() {
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [dismissed, setDismissed] = useState(false)
+  const [busy, setBusy] = useState<Busy>(null)
   const invalidateMe = useInvalidateMe()
 
   if (dismissed) return null
+
+  async function runPasskey(mode: Exclude<Busy, null>) {
+    setBusy(mode)
+    setError(null)
+    try {
+      if (mode === 'register') {
+        await createPasskey()
+      } else {
+        await getPasskeyAssertion()
+      }
+      await invalidateMe()
+      setStage('closed')
+      setDismissed(true)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'passkey flow failed')
+    } finally {
+      setBusy(null)
+    }
+  }
 
   async function requestCode() {
     setError(null)
@@ -50,11 +72,21 @@ export function SaveHistoryBanner() {
   if (stage === 'closed') {
     return (
       <div className="flex items-center justify-between gap-3 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-sm">
-        <span>Save your splits — add an email to get them back on another device.</span>
-        <div className="flex shrink-0 gap-2">
+        <span>Save your splits - add an email or a passkey to get them back on another device.</span>
+        <div className="flex shrink-0 flex-wrap gap-2">
           <button type="button" className="text-[var(--color-accent)] font-medium" onClick={() => setStage('email')}>
             Add email
           </button>
+          {supportsPasskeys() && (
+            <>
+              <button type="button" className="text-[var(--color-accent)] font-medium" onClick={() => void runPasskey('register')} disabled={busy !== null}>
+                Add passkey
+              </button>
+              <button type="button" className="text-[var(--color-accent)] font-medium" onClick={() => void runPasskey('login')} disabled={busy !== null}>
+                Use passkey
+              </button>
+            </>
+          )}
           <button type="button" className="text-neutral-400" onClick={() => setDismissed(true)}>
             Dismiss
           </button>
@@ -102,6 +134,7 @@ export function SaveHistoryBanner() {
           </button>
         </div>
       )}
+      {busy && <p className="mt-2 text-neutral-500">Working on {busy === 'register' ? 'creating' : 'using'} your passkey...</p>}
       {error && <p className="mt-2 text-[var(--color-warn)]">{error}</p>}
     </div>
   )

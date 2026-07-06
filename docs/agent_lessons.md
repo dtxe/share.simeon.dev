@@ -45,9 +45,8 @@ Unconventional, easy-to-miss things future work on this repo should know. Ordina
 ## Remaining TODO (not yet done)
 
 - **Full WebAuthn round trip** — ceremony endpoints are live and return real challenges, but completing a registration/login needs a real browser + platform authenticator, which hasn't been exercised (curl can't fake WebAuthn attestation).
-- **Live Fireworks extraction** — blocked on a real `FIREWORKS_API_KEY`; the graceful-failure path (502, no leaked upstream detail) is confirmed, but no real receipt photo has been run through it yet.
 
-Done since first written: daily cleanup job (`internal/cleanup`, wired into `main.go`, confirmed live removing expired OTP codes/WebAuthn ceremonies) and the Caddy prod-ingress build (both prod Docker images built and smoke-tested standalone — see `docs/todo.md` step 13 for details, including the Caddy directive-order bug above).
+Done since first written: daily cleanup job (`internal/cleanup`, wired into `main.go`, confirmed live removing expired OTP codes/WebAuthn ceremonies), the Caddy prod-ingress build (both prod Docker images built and smoke-tested standalone — see `docs/todo.md` step 13 for details, including the Caddy directive-order bug above), and live Fireworks extraction smoke-tested against a real receipt photo.
 
 ## Docker secrets
 

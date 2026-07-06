@@ -75,3 +75,54 @@ func (m *Manager) AttachEmailOrMerge(ctx context.Context, currentUserID, email s
 	}
 	return existingID, nil
 }
+
+// MergeAnonymousInto folds a throwaway anonymous identity into a durable
+// target user, returning false without side effects if the source has already
+// been upgraded with email or passkeys. Passkey login uses this for the common
+// returning-user case: a fresh browser auto-provisions an anonymous row, may
+// create local bills, then proves ownership of an existing passkey account.
+func (m *Manager) MergeAnonymousInto(ctx context.Context, sourceUserID, targetUserID string) (bool, error) {
+	if sourceUserID == targetUserID {
+		return false, nil
+	}
+
+	tx, err := m.pool.Begin(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+
+	var sourceIsAnonymous bool
+	if err := tx.QueryRow(ctx, `
+		SELECT email IS NULL
+		AND NOT EXISTS (SELECT 1 FROM webauthn_credentials WHERE user_id = users.id)
+		FROM users
+		WHERE id = $1
+	`, sourceUserID).Scan(&sourceIsAnonymous); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !sourceIsAnonymous {
+		return false, tx.Commit(ctx)
+	}
+
+	if _, err := tx.Exec(ctx, `SELECT 1 FROM users WHERE id = $1 FOR UPDATE`, targetUserID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE bill_sessions SET owner_user_id = $1 WHERE owner_user_id = $2`, targetUserID, sourceUserID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `UPDATE sessions SET user_id = $1 WHERE user_id = $2`, targetUserID, sourceUserID); err != nil {
+		return false, err
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM users WHERE id = $1`, sourceUserID); err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
+}

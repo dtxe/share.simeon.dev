@@ -128,7 +128,9 @@ func (m *Manager) BeginPasskeyRegistration(ctx context.Context, currentUserID st
 	if err != nil {
 		return nil, "", err
 	}
-	creation, session, err := m.webauthn.BeginRegistration(user)
+	creation, session, err := m.webauthn.BeginRegistration(user,
+		webauthn.WithResidentKeyRequirement(protocol.ResidentKeyRequirementRequired),
+	)
 	if err != nil {
 		return nil, "", err
 	}
@@ -186,7 +188,7 @@ func (m *Manager) BeginPasskeyLogin(ctx context.Context) (*protocol.CredentialAs
 // belongs to, bumps that credential's stored sign count (clone-detection
 // bookkeeping), and issues + writes (cookie or header, per config) a fresh
 // session for that user onto the response.
-func (m *Manager) FinishPasskeyLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, ceremonyID string) error {
+func (m *Manager) FinishPasskeyLogin(ctx context.Context, w http.ResponseWriter, r *http.Request, currentUserID, ceremonyID string) error {
 	if !m.cfg.PasskeyAccountsEnabled {
 		return ErrPasskeyDisabled
 	}
@@ -214,6 +216,12 @@ func (m *Manager) FinishPasskeyLogin(ctx context.Context, w http.ResponseWriter,
 		UPDATE webauthn_credentials SET credential_json = $2 WHERE credential_id = $1
 	`, cred.ID, credJSON); err != nil {
 		return err
+	}
+
+	if currentUserID != "" && currentUserID != resolvedUserID {
+		if _, err := m.MergeAnonymousInto(ctx, currentUserID, resolvedUserID); err != nil {
+			return err
+		}
 	}
 
 	raw, _, err := m.CreateSessionFor(ctx, r, resolvedUserID)

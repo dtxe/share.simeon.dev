@@ -10,9 +10,9 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `.env.example`
 - [x] `docker-compose.yml` + `docker-compose.override.yml` (postgres, redis, mailpit, backend, frontend)
 - [x] `docker/backend.Dockerfile` (dev + prod multi-stage)
-- [x] `docker/frontend.Dockerfile` (dev + prod multi-stage, nginx same-origin proxy) — scaffolded, frontend app code still pending (step 10)
+- [x] `docker/frontend.Dockerfile` (dev + prod multi-stage, Caddy same-origin proxy)
 - [x] `backend/cmd/server/main.go` health endpoint (`/healthz`) — confirmed: postgres/redis/mailpit/backend healthy, `curl /healthz` → 200, air hot reload working
-  - note: bumped Go pin from 1.22 to 1.25 (chi/pgx/migrate/go-redis/go-webauthn all require 1.24+ now); backend dev host port moved to 8081 to avoid clashing with frontend's prod nginx port 8080
+  - note: bumped Go pin from 1.22 to 1.25 (chi/pgx/migrate/go-redis/go-webauthn all require 1.24+ now); backend dev host port moved to 8081 to avoid clashing with frontend's prod Caddy port 8080
   - note: migrations live under `backend/internal/db/migrations/` (not top-level `backend/migrations/`) since `go:embed` can't reference parent directories
 
 ## 2. Identity foundation
@@ -46,7 +46,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `internal/auth/webauthn.go` (go-webauthn v0.17.4) — register/login ceremonies, ceremony challenges stored in Postgres (`webauthn_ceremonies`, 2min TTL) not in-memory, so an air hot-reload mid-ceremony doesn't strand the user
 - [x] `POST /api/auth/passkey/register/{options,verify}`, `POST /api/auth/passkey/login/{options,verify}`
 - [x] Manual check: confirmed `PASSKEY_ACCOUNTS_ENABLED=false` (default) → 404 on register/options; `=true` → real WebAuthn creation challenge returned (valid RP info, pubKeyCredParams, challenge)
-- [ ] Full register→login round trip needs a real browser + authenticator (can't fake WebAuthn attestation via curl) — **deferred to frontend integration testing**, per your direction
+- [ ] Full register→login round trip needs a real browser + authenticator (can't fake WebAuthn attestation via curl) — frontend wiring is now implemented; remaining verification is the live browser/authenticator pass
   - note: full `webauthn.Credential` (incl. attestation/flags) stored as JSONB (`credential_json`), not decomposed columns — the library needs the whole struct back to validate future logins correctly (migration 0003 alters the original schema sketch)
   - note: WebAuthnID uses the user's UUID text as raw bytes (not binary-decoded) — simpler, still well under the 64-byte spec limit
 
@@ -64,10 +64,11 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `internal/llm/fireworks` — default impl (Kimi K2.7, json_schema response format)
 - [x] `internal/llm/openai` — sibling impl proving swappability (both are ~15-line wrappers around `openaicompat.Client`)
 - [x] Unit tests against a mocked HTTP server (request shape, auth header, response parsing, non-200 handling, unknown-field rejection) — all passing
-- [ ] Manual curl smoke test against 2-3 real receipt photos — **blocked on a real `FIREWORKS_API_KEY`**, per your call to defer this; confirmed live that the endpoint fails *gracefully* (502, generic message, no upstream detail leaked, attempt still recorded in `extraction_runs`) when the key/network isn't available
+- [x] Manual curl smoke test against a real receipt photo — completed with the live Fireworks key from docker secrets; extraction returned structured JSON for a real receipt image
 
 ## 8. Receipt upload pipeline
 - [x] `internal/receipts` — size cap, magic-byte sniff, decompression-bomb guard, re-encode to JPEG q80 (strips EXIF/GPS)
+- [x] Unit tests cover receipt upper bounds: uploads over 10 MiB and decoded images over 40MP are rejected server-side
 - [x] Storage: random-hex filename under a per-session subdirectory, filename never client-derived
 - [x] Manual check: uploaded a real JPEG end-to-end, fetched it back via both the owner route and the public share route, confirmed `file` reports valid JPEG both times
 
@@ -87,7 +88,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `lib/api.ts` — typed fetch wrapper (`credentials:'include'`) covering every backend endpoint
 - [x] `lib/split.ts` — local preview math mirroring backend cents/largest-remainder formula, reconciled against the server before anything is shown as final
 - [x] `index.css` design tokens (color, people palette) — no separate `state/bill.ts` reducer/localStorage layer, since the backend now persists everything from session creation onward (superseded by the identity-model rework; React Query against the live API replaced the originally-planned local-first reducer)
-- [x] `auth/useMe.ts` + `SaveHistoryBanner` (inline email OTP request/verify UI)
+- [x] `auth/useMe.ts` + `SaveHistoryBanner` (inline email OTP request/verify UI, plus passkey register/login CTA)
 - [x] Welcome screen (3 BigActionCards + "Your bills" history + SaveHistoryBanner) — verified in a real mobile-viewport browser
 - [x] People screen — verified live: add/remove chips, round-robin colors, Next gating on 2+ people
 - [x] Items screen (manual entry + receipt review share the same editable list; extract button appears once a receipt exists)
@@ -126,4 +127,4 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `ANON_ACCOUNTS_ENABLED=false` → every route 401s without session — verified, then reverted
 - [x] Assign screen manually tested on narrow mobile viewport emulation — verified live in-browser at 390×844 (agent-browser), both dish-mode and person-mode interactions
 
-Only remaining items anywhere in this file: full WebAuthn browser round-trip and live Fireworks extraction against a real photo — both blocked on inputs only you can provide (sitting down with an authenticator, or a real API key). Everything else in the original plan is built, wired, and verified against the live stack.
+Only remaining item anywhere in this file: full WebAuthn browser round-trip with a real authenticator. Live Fireworks extraction against a real photo is now verified against the live stack.
