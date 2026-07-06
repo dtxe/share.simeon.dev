@@ -2,9 +2,13 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"io"
+	"log"
+	"math"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -43,6 +47,9 @@ func (s *Server) handleUploadReceipt(w http.ResponseWriter, r *http.Request) {
 
 	relPath, err := s.Receipts.Save(sessionID, file)
 	if err != nil {
+		if s.Cfg.Debug {
+			log.Printf("debug: receipt upload session=%s: %v", sessionID, err)
+		}
 		writeJSONError(w, http.StatusBadRequest, "could not process image")
 		return
 	}
@@ -154,19 +161,24 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 
 	status := "success"
 	var errMsg *string
+	var rawResponse []byte
 	if extractErr != nil {
 		status = "error"
 		msg := "extraction failed"
 		errMsg = &msg
+		if s.Cfg.Debug {
+			log.Printf("debug: extract session=%s provider=%s: %v", sessionID, s.LLM.Name(), extractErr)
+		}
 	} else {
 		actualCents := estimateCostCents(result.Usage, s.Cfg.LLMCostPer1KTokensCents)
 		_ = s.RL.AdjustLLMSpend(ctx, actualCents-estimatedCents)
+		rawResponse, _ = json.Marshal(result.Receipt)
 	}
 
 	_, _ = s.Pool.Exec(ctx, `
-		INSERT INTO extraction_runs (session_id, provider, model, status, error_message)
-		VALUES ($1, $2, $3, $4, $5)
-	`, sessionID, s.LLM.Name(), s.Cfg.LLMModel, status, errMsg)
+		INSERT INTO extraction_runs (session_id, provider, model, status, error_message, raw_response)
+		VALUES ($1, $2, $3, $4, $5, $6)
+	`, sessionID, s.LLM.Name(), s.Cfg.LLMModel, status, errMsg, rawResponse)
 
 	if extractErr != nil {
 		// Don't leak upstream error detail to the client — internal/llm's own
@@ -175,10 +187,34 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Persist server-side rather than waiting on the client to round-trip a
+	// separate dishes/bulk save — the client only gets a reviewed *edit* of
+	// what's already saved, not the sole path to saving it at all.
+	newDishes := make([]store.NewDish, 0, len(result.Receipt.Items))
+	for _, it := range result.Receipt.Items {
+		name := strings.TrimSpace(it.Name)
+		if name == "" {
+			continue
+		}
+		newDishes = append(newDishes, store.NewDish{
+			Name:           name,
+			UnitPriceCents: it.PriceCents,
+			Quantity:       it.Quantity,
+			Source:         "llm_extracted",
+		})
+	}
+	if _, err := s.Store.ReplaceDishes(ctx, sessionID, userID, newDishes); err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "extraction succeeded but saving items failed")
+		return
+	}
+
 	writeJSON(w, http.StatusOK, result.Receipt)
 }
 
 func estimateCostCents(usage llm.Usage, costPer1KTokensCents float64) int {
 	total := usage.PromptTokens + usage.CompletionTokens
-	return int(float64(total) / 1000.0 * costPer1KTokensCents)
+	// Round rather than truncate — floor-ing every call systematically
+	// underreports spend against the daily cap, letting real spend drift
+	// past it over many calls.
+	return int(math.Round(float64(total) / 1000.0 * costPer1KTokensCents))
 }

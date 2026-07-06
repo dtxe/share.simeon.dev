@@ -22,7 +22,9 @@ import (
 const extractionPrompt = `You are extracting structured data from a photo of a restaurant receipt.
 Return the restaurant name, the date (ISO 8601, best effort), and every line item with its name,
 price in integer cents, and quantity. If a field can't be determined, omit it rather than guessing wildly.
-Respond using exactly these JSON field names: restaurantName, date, items (each with name, priceCents, quantity).`
+Call the extract_receipt function with the result — do not respond in plain text.`
+
+const extractFunctionName = "extract_receipt"
 
 type Client struct {
 	BaseURL    string
@@ -57,28 +59,45 @@ type imageURL struct {
 	URL string `json:"url"`
 }
 
-type responseFormat struct {
-	Type       string         `json:"type"`
-	JSONSchema jsonSchemaSpec `json:"json_schema"`
+type toolDef struct {
+	Type     string      `json:"type"`
+	Function functionDef `json:"function"`
 }
 
-type jsonSchemaSpec struct {
-	Name   string         `json:"name"`
-	Strict bool           `json:"strict"`
-	Schema map[string]any `json:"schema"`
+type functionDef struct {
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	Parameters  map[string]any `json:"parameters"`
+}
+
+type toolChoice struct {
+	Type     string           `json:"type"`
+	Function toolChoiceTarget `json:"function"`
+}
+
+type toolChoiceTarget struct {
+	Name string `json:"name"`
 }
 
 type chatRequest struct {
-	Model          string         `json:"model"`
-	Messages       []chatMessage  `json:"messages"`
-	ResponseFormat responseFormat `json:"response_format"`
-	MaxTokens      int            `json:"max_tokens"`
+	Model           string        `json:"model"`
+	Messages        []chatMessage `json:"messages"`
+	Tools           []toolDef     `json:"tools"`
+	ToolChoice      toolChoice    `json:"tool_choice"`
+	ReasoningEffort string        `json:"reasoning_effort"`
+	MaxTokens       int           `json:"max_tokens"`
 }
 
 type chatResponse struct {
 	Choices []struct {
 		Message struct {
-			Content string `json:"content"`
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
 		} `json:"message"`
 	} `json:"choices"`
 	Usage struct {
@@ -122,15 +141,21 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 				},
 			},
 		},
-		ResponseFormat: responseFormat{
-			Type: "json_schema",
-			JSONSchema: jsonSchemaSpec{
-				Name:   "receipt_extraction",
-				Strict: true,
-				Schema: extractionSchema,
+		Tools: []toolDef{
+			{
+				Type: "function",
+				Function: functionDef{
+					Name:       extractFunctionName,
+					Parameters: extractionSchema,
+				},
 			},
 		},
-		MaxTokens: 2000,
+		ToolChoice: toolChoice{
+			Type:     "function",
+			Function: toolChoiceTarget{Name: extractFunctionName},
+		},
+		ReasoningEffort: "low",
+		MaxTokens:       2000,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -157,10 +182,15 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		// Deliberately don't include respBody in the returned error — it may
-		// contain the request echoed back, and callers only ever surface a
-		// generic "extraction failed" to the client anyway (see httpapi).
-		return nil, fmt.Errorf("openaicompat: upstream status %d", resp.StatusCode)
+		// Callers only ever surface a generic "extraction failed" to the
+		// client (see httpapi), but a truncated snippet is safe and useful
+		// in server-side debug logs — this is the upstream's own error body,
+		// not our request (which contains the base64 image and stays out).
+		snippet := respBody
+		if len(snippet) > 500 {
+			snippet = snippet[:500]
+		}
+		return nil, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
 	}
 
 	var chatResp chatResponse
@@ -171,11 +201,20 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 		return nil, fmt.Errorf("openaicompat: no choices in response")
 	}
 
+	msg := chatResp.Choices[0].Message
+	if len(msg.ToolCalls) == 0 {
+		return nil, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", msg.Content)
+	}
+	call := msg.ToolCalls[0]
+	if call.Function.Name != extractFunctionName {
+		return nil, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
+	}
+
 	var receipt llm.ExtractedReceipt
-	dec := json.NewDecoder(bytes.NewReader([]byte(chatResp.Choices[0].Message.Content)))
+	dec := json.NewDecoder(bytes.NewReader([]byte(call.Function.Arguments)))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(&receipt); err != nil {
-		return nil, fmt.Errorf("openaicompat: decoding extracted receipt JSON: %w", err)
+		return nil, fmt.Errorf("openaicompat: decoding extracted receipt tool call arguments: %w (raw arguments: %s)", err, call.Function.Arguments)
 	}
 
 	return &llm.Result{

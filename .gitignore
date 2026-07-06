@@ -16,6 +16,7 @@ backend/*.log
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/.pnpm-store/
 
 # editor/OS
 .DS_Store
@@ -26,3 +27,6 @@ frontend/.vite/
 
 # claude code local state
 .claude/
+
+# local working context (audit notes, scratch)
+docs/temp/
