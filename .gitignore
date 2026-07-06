@@ -26,7 +26,9 @@ frontend/.pnpm-store/
 .mise.local.toml
 
 # claude code local state
-.claude/
+.claude/*
+!.claude/skills/
+!.claude/skills/**
 
 # local working context (audit notes, scratch)
 docs/temp/
