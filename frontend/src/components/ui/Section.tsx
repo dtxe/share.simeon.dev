@@ -32,7 +32,7 @@ export function Section({
         </span>
         <span className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
           {!open && warn}
-          {!open && summary}
+          {!open && summary && <span className="font-receipt">{summary}</span>}
           <ChevronDown size={18} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
         </span>
       </button>

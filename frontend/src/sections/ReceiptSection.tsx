@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Sparkles, Trash2 } from 'lucide-react'
+import { Loader2, Sparkles, Trash2 } from 'lucide-react'
 import { ApiError, type Dish } from '../lib/api'
 import { formatCents } from '../lib/split'
 import { toUploadableImage } from '../lib/image'
@@ -105,8 +105,9 @@ export function ReceiptSection({
           type="button"
           onClick={() => fileInputRef.current?.click()}
           disabled={stage === 'uploading' || stage === 'parsing'}
-          className="rounded-lg border border-dashed border-[var(--color-border)] bg-white px-4 py-4 text-center text-sm font-medium text-[var(--color-accent)] disabled:opacity-60"
+          className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] bg-white px-4 py-4 text-center text-sm font-medium text-[var(--color-accent)] disabled:opacity-60"
         >
+          {(stage === 'uploading' || stage === 'parsing') && <Loader2 size={16} className="animate-spin" />}
           {stage === 'uploading' ? 'Uploading…' : stage === 'parsing' ? 'Reading your receipt…' : 'Scan receipt — photo or upload'}
         </button>
       )}
@@ -116,7 +117,10 @@ export function ReceiptSection({
           {receiptUrl && <ReceiptImage src={receiptUrl} size={64} />}
           <div className="flex flex-1 flex-col gap-1">
             {stage === 'parsing' ? (
-              <span className="text-sm text-neutral-500">Reading your receipt…</span>
+              <span className="flex items-center gap-1.5 text-sm text-neutral-500">
+                <Loader2 size={14} className="animate-spin" />
+                Reading your receipt…
+              </span>
             ) : confirmRescan ? (
               <div className="flex flex-col gap-2 text-sm">
                 <span>Re-scanning replaces all items and clears the split.</span>
@@ -152,16 +156,36 @@ export function ReceiptSection({
       {error && <p className="text-sm text-[var(--color-warn)]">{error}</p>}
 
       <div className="flex flex-col divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-white">
-        {dishes.map((d) => (
-          <DishEditorRow key={d.id} dish={d} onUpdate={(patch) => onUpdateDish(d.id, patch)} onDelete={() => onDeleteDish(d.id)} />
-        ))}
-        <AddDishRow onAdd={onAddDish} />
+        {stage === 'parsing' && dishes.length === 0 ? (
+          <>
+            <ShimmerRow />
+            <ShimmerRow />
+            <ShimmerRow />
+          </>
+        ) : (
+          <>
+            {dishes.map((d) => (
+              <DishEditorRow key={d.id} dish={d} onUpdate={(patch) => onUpdateDish(d.id, patch)} onDelete={() => onDeleteDish(d.id)} />
+            ))}
+            <AddDishRow onAdd={onAddDish} />
+          </>
+        )}
       </div>
 
       <div className="flex items-center justify-between border-t border-dashed border-[var(--color-border)] pt-2 text-sm">
         <span className="text-[var(--color-ink-soft)]">Subtotal</span>
         <span className="font-receipt">{formatCents(subtotalCents)}</span>
       </div>
+    </div>
+  )
+}
+
+function ShimmerRow() {
+  return (
+    <div className="flex items-center gap-2 p-3">
+      <div className="h-4 flex-1 animate-pulse rounded bg-[var(--color-border)]" />
+      <div className="h-4 w-12 animate-pulse rounded bg-[var(--color-border)]" />
+      <div className="h-4 w-16 animate-pulse rounded bg-[var(--color-border)]" />
     </div>
   )
 }

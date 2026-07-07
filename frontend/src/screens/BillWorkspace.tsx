@@ -227,7 +227,7 @@ export default function BillWorkspace() {
         open={open.receipt}
         onToggle={() => toggleSection('receipt')}
         complete={complete.receipt}
-        summary={dishes.length > 0 ? `${dishes.length} items · ${formatCents(session?.subtotalCents ?? 0)}` : undefined}
+        summary={dishes.length > 0 ? `${dishes.length} items, ${formatCents(session?.subtotalCents ?? 0)} subtotal` : undefined}
       >
         <ReceiptSection
           hasReceipt={session?.hasReceipt ?? false}
@@ -261,8 +261,10 @@ export default function BillWorkspace() {
         summary={
           session?.totalPaidCents != null
             ? `${formatCents(session.totalPaidCents)}${
-                session.subtotalCents > 0 ? ` (${(((session.totalPaidCents - session.subtotalCents) / session.subtotalCents) * 100).toFixed(1)}%)` : ''
-              }`
+                session.subtotalCents > 0
+                  ? ` (${session.totalPaidCents - session.subtotalCents >= 0 ? '+' : ''}${(((session.totalPaidCents - session.subtotalCents) / session.subtotalCents) * 100).toFixed(1)}%)`
+                  : ''
+              } incl. tax and tip`
             : undefined
         }
       >
@@ -279,8 +281,8 @@ export default function BillWorkspace() {
         open={open.assign}
         onToggle={() => toggleSection('assign')}
         complete={complete.assign}
-        summary={complete.assign ? 'All assigned' : undefined}
-        warn={!complete.assign && dishes.length > 0 ? <span className="text-[var(--color-warn)]">{unassigned.length} left</span> : undefined}
+        summary={complete.assign ? 'All matched' : undefined}
+        warn={!complete.assign && dishes.length > 0 ? <span className="text-[var(--color-warn)]">{unassigned.length} unmatched</span> : undefined}
       >
         <AssignSection
           people={people}
@@ -313,7 +315,7 @@ export default function BillWorkspace() {
       )}
 
       <div className="fixed inset-x-0 bottom-0 mx-auto flex max-w-md items-center justify-between border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-        <span className="text-sm text-[var(--color-ink-soft)]">
+        <span className="font-receipt text-sm text-[var(--color-ink-soft)]">
           {dishes.length > 0 ? `${assignedCount} of ${dishes.length} assigned` : formatCents(session?.subtotalCents ?? 0)}
         </span>
         <Button disabled={dishes.length === 0 || people.length === 0} onClick={goToSettle}>

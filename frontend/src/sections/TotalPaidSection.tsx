@@ -47,7 +47,7 @@ export function TotalPaidSection({
         />
       </div>
       {parsed != null && (
-        <p className="text-sm text-[var(--color-ink-soft)]">
+        <p className="font-receipt text-sm text-[var(--color-ink-soft)]">
           {delta >= 0 ? '+' : ''}
           {formatCents(delta)} ({pct.toFixed(1)}%) vs subtotal {formatCents(subtotalCents)}
           {fromReceipt && !userEdited.current && ' · from your receipt — tap to adjust'}
