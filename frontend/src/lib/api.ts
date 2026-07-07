@@ -167,7 +167,16 @@ export const api = {
       headers: CSRF_HEADERS,
       body: form,
     })
-    if (!res.ok) throw new ApiError(res.status, 'upload failed')
+    if (!res.ok) {
+      let message = ''
+      try {
+        const body = await res.json()
+        if (body?.error) message = body.error
+      } catch {
+        // ignore non-JSON error bodies
+      }
+      throw new ApiError(res.status, message || `Upload failed (HTTP ${res.status}).`)
+    }
   },
   receiptUrl: (sessionId: string) => `/api/sessions/${enc(sessionId)}/receipt`,
 

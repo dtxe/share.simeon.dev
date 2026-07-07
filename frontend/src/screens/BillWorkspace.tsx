@@ -33,6 +33,11 @@ function extractErrorMessage(err: unknown): string {
   return "Couldn't read the receipt — add items below."
 }
 
+function uploadErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.message) return err.message
+  return 'Upload failed. Try again.'
+}
+
 export default function BillWorkspace() {
   const { id: routeId } = useParams<{ id?: string }>()
   const [, navigate] = useLocation()
@@ -147,6 +152,8 @@ export default function BillWorkspace() {
         return
       }
 
+      console.log('[receipt] uploadable ready', { inputType: file.type, inputSize: file.size, inputName: file.name, outputType: uploadable.type, outputSize: uploadable.size })
+
       id = await ensure()
       setReceiptFlow(id, { stage: 'uploading', error: null })
 
@@ -159,7 +166,8 @@ export default function BillWorkspace() {
       invalidate(id)
       setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null })
     } catch (err) {
-      setReceiptFlow(id ?? currentKey, { stage: 'failed', error: phase === 'upload' ? 'Upload failed. Try again.' : extractErrorMessage(err) })
+      console.error('[receipt] upload failed', { phase, inputType: file.type, inputSize: file.size, inputName: file.name, error: err })
+      setReceiptFlow(id ?? currentKey, { stage: 'failed', error: phase === 'upload' ? uploadErrorMessage(err) : extractErrorMessage(err) })
     }
   }
 
