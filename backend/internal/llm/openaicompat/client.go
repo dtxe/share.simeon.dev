@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"time"
 
@@ -36,9 +37,11 @@ Call the extract_receipt function with the result — do not respond in plain te
 const minimizeReasoningPromptSuffix = `Minimize thinking: use only the reasoning needed to read the receipt, then call the extract_receipt function directly.`
 
 const (
-	extractFunctionName = "extract_receipt"
-	extractionMaxTokens = 4000
-	kimiK2P7CodeModel   = "accounts/fireworks/models/kimi-k2p7-code"
+	extractFunctionName             = "extract_receipt"
+	extractionMaxTokens             = 4000
+	extractionReasoningBudgetTokens = extractionMaxTokens / 2
+	kimiK2P7CodeModel               = "accounts/fireworks/models/kimi-k2p7-code"
+	minimaxM3Model                  = "accounts/fireworks/models/minimax-m3"
 )
 
 type Client struct {
@@ -94,13 +97,18 @@ type toolChoiceTarget struct {
 	Name string `json:"name"`
 }
 
+type thinkingConfig struct {
+	Type         string `json:"type"`
+	BudgetTokens int    `json:"budget_tokens"`
+}
+
 type chatRequest struct {
-	Model           string        `json:"model"`
-	Messages        []chatMessage `json:"messages"`
-	Tools           []toolDef     `json:"tools"`
-	ToolChoice      toolChoice    `json:"tool_choice"`
-	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
-	MaxTokens       int           `json:"max_tokens"`
+	Model      string          `json:"model"`
+	Messages   []chatMessage   `json:"messages"`
+	Tools      []toolDef       `json:"tools"`
+	ToolChoice toolChoice      `json:"tool_choice"`
+	Thinking   *thinkingConfig `json:"thinking,omitempty"`
+	MaxTokens  int             `json:"max_tokens"`
 }
 
 type chatResponse struct {
@@ -114,6 +122,7 @@ type chatResponse struct {
 				} `json:"function"`
 			} `json:"tool_calls"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
 	Usage struct {
 		PromptTokens     int `json:"prompt_tokens"`
@@ -173,8 +182,8 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 			Type:     "function",
 			Function: toolChoiceTarget{Name: extractFunctionName},
 		},
-		ReasoningEffort: reasoningEffortForModel(c.Model),
-		MaxTokens:       extractionMaxTokens,
+		Thinking:  thinkingConfigForModel(c.Model),
+		MaxTokens: extractionMaxTokens,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -220,6 +229,11 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 		return nil, fmt.Errorf("openaicompat: no choices in response")
 	}
 
+	if chatResp.Choices[0].FinishReason == "length" {
+		log.Printf("llm: extraction truncated at max_tokens (model=%s, completion_tokens=%d, reasoning_budget=%d) — tool-call JSON may be incomplete",
+			c.Model, chatResp.Usage.CompletionTokens, extractionReasoningBudgetTokens)
+	}
+
 	msg := chatResp.Choices[0].Message
 	if len(msg.ToolCalls) == 0 {
 		return nil, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", msg.Content)
@@ -246,17 +260,20 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 }
 
 func extractionPromptForModel(model string) string {
-	if reasoningEffortForModel(model) != "" {
+	if thinkingConfigForModel(model) != nil {
 		return extractionPrompt
 	}
 	return extractionPrompt + "\n\n" + minimizeReasoningPromptSuffix
 }
 
-func reasoningEffortForModel(model string) string {
+func thinkingConfigForModel(model string) *thinkingConfig {
 	switch model {
-	case kimiK2P7CodeModel:
-		return "low"
+	case kimiK2P7CodeModel, minimaxM3Model:
+		return &thinkingConfig{
+			Type:         "enabled",
+			BudgetTokens: extractionReasoningBudgetTokens,
+		}
 	default:
-		return ""
+		return nil
 	}
 }

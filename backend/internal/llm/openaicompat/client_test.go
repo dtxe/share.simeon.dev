@@ -43,6 +43,7 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 					} `json:"function"`
 				} `json:"tool_calls"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		}, 1)
 		resp.Choices[0].Message.ToolCalls = make([]struct {
 			Function struct {
@@ -52,6 +53,7 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 		}, 1)
 		resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
 		resp.Choices[0].Message.ToolCalls[0].Function.Arguments = args
+		resp.Choices[0].FinishReason = "stop"
 		resp.Usage.PromptTokens = 500
 		resp.Usage.CompletionTokens = 80
 
@@ -92,22 +94,26 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 
 func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
 	tests := []struct {
-		name                 string
-		model                string
-		wantReasoningPresent bool
-		wantReasoning        string
-		wantMinimizePrompt   bool
+		name                string
+		model               string
+		wantThinkingPresent bool
+		wantThinkingType    string
+		wantThinkingBudget  int
+		wantMinimizePrompt  bool
 	}{
 		{
-			name:                 "kimi low reasoning effort",
-			model:                kimiK2P7CodeModel,
-			wantReasoningPresent: true,
-			wantReasoning:        "low",
+			name:                "kimi hard reasoning budget",
+			model:               kimiK2P7CodeModel,
+			wantThinkingPresent: true,
+			wantThinkingType:    "enabled",
+			wantThinkingBudget:  extractionReasoningBudgetTokens,
 		},
 		{
-			name:               "minimax prompt guidance",
-			model:              "accounts/fireworks/models/minimax-m3",
-			wantMinimizePrompt: true,
+			name:                "minimax hard reasoning budget",
+			model:               minimaxM3Model,
+			wantThinkingPresent: true,
+			wantThinkingType:    "enabled",
+			wantThinkingBudget:  extractionReasoningBudgetTokens,
 		},
 		{
 			name:               "unknown model prompt guidance",
@@ -143,12 +149,24 @@ func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
 				t.Fatalf("ExtractReceipt: %v", err)
 			}
 
-			gotReasoning, gotReasoningPresent := gotRaw["reasoning_effort"]
-			if gotReasoningPresent != tt.wantReasoningPresent {
-				t.Fatalf("reasoning_effort present = %v, want %v", gotReasoningPresent, tt.wantReasoningPresent)
+			if _, gotReasoningSent := gotRaw["reasoning_effort"]; gotReasoningSent {
+				t.Fatalf("reasoning_effort must not be sent (thinking.budget_tokens is the hard-cap mechanism), got %v", gotRaw["reasoning_effort"])
 			}
-			if tt.wantReasoningPresent && gotReasoning != tt.wantReasoning {
-				t.Fatalf("reasoning_effort = %v, want %q", gotReasoning, tt.wantReasoning)
+			gotThinking, gotThinkingPresent := gotRaw["thinking"]
+			if gotThinkingPresent != tt.wantThinkingPresent {
+				t.Fatalf("thinking present = %v, want %v", gotThinkingPresent, tt.wantThinkingPresent)
+			}
+			if tt.wantThinkingPresent {
+				thinkingMap, ok := gotThinking.(map[string]any)
+				if !ok {
+					t.Fatalf("thinking field is not an object: %T", gotThinking)
+				}
+				if gotType, _ := thinkingMap["type"].(string); gotType != tt.wantThinkingType {
+					t.Fatalf("thinking.type = %q, want %q", gotType, tt.wantThinkingType)
+				}
+				if gotBudget, _ := thinkingMap["budget_tokens"].(float64); int(gotBudget) != tt.wantThinkingBudget {
+					t.Fatalf("thinking.budget_tokens = %v, want %d", gotBudget, tt.wantThinkingBudget)
+				}
 			}
 			if gotBody.MaxTokens != extractionMaxTokens {
 				t.Fatalf("max_tokens = %d, want %d", gotBody.MaxTokens, extractionMaxTokens)
@@ -197,6 +215,7 @@ func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 					} `json:"function"`
 				} `json:"tool_calls"`
 			} `json:"message"`
+			FinishReason string `json:"finish_reason"`
 		}, 1)
 		resp.Choices[0].Message.ToolCalls = make([]struct {
 			Function struct {
@@ -206,6 +225,7 @@ func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 		}, 1)
 		resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
 		resp.Choices[0].Message.ToolCalls[0].Function.Arguments = `{"items":[],"unexpected_field":"should cause a decode error"}`
+		resp.Choices[0].FinishReason = "stop"
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))
@@ -232,6 +252,7 @@ func writeReceiptResponse(t *testing.T, w http.ResponseWriter, args string) {
 				} `json:"function"`
 			} `json:"tool_calls"`
 		} `json:"message"`
+		FinishReason string `json:"finish_reason"`
 	}, 1)
 	resp.Choices[0].Message.ToolCalls = make([]struct {
 		Function struct {
@@ -241,6 +262,7 @@ func writeReceiptResponse(t *testing.T, w http.ResponseWriter, args string) {
 	}, 1)
 	resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
 	resp.Choices[0].Message.ToolCalls[0].Function.Arguments = args
+	resp.Choices[0].FinishReason = "stop"
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {
