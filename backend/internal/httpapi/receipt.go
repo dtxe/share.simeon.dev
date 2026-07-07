@@ -250,6 +250,27 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// After a successful extraction, the LLM has already seen the full-quality
+	// original. Compress the stored file asynchronously so storage and share
+	// links serve the smaller version, replacing the original on disk.
+	if !sess.ReceiptImageCompressed && sess.ReceiptImagePath != nil {
+		go func(path string) {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			_, _, err := s.Receipts.Compress(path)
+			if err != nil {
+				if s.Cfg.Debug {
+					log.Printf("debug: compress receipt session=%s path=%s: %v", sessionID, path, err)
+				}
+				return
+			}
+			if err := s.Store.MarkReceiptImageCompressed(bgCtx, sessionID, userID); err != nil && s.Cfg.Debug {
+				log.Printf("debug: mark receipt compressed session=%s: %v", sessionID, err)
+			}
+		}(*sess.ReceiptImagePath)
+	}
+
 	writeJSON(w, http.StatusOK, result.Receipt)
 }
 

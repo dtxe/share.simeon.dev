@@ -36,6 +36,7 @@ Went through several rounds of direction before landing here — earlier sketche
 ## Receipt upload handling
 - Validate by sniffing magic bytes (`http.DetectContentType`), not client-supplied Content-Type/extension.
 - Dimension check before full decode (decompression-bomb guard), then **always re-encode to JPEG q80** server-side — this strips EXIF/GPS (real privacy leak on an image behind a *public* share link) and neutralizes polyglot-file tricks, not just a size optimization.
+- After a **successful** LLM extraction, the stored receipt is asynchronously re-downscaled to a max 2000-pixel longest edge and re-encoded at **JPEG quality 70**, atomically replacing the original on disk. The LLM still gets the full-resolution q80 original for extraction; storage and public share links serve the smaller compressed version.
 - Server-generated filenames only (`{uuid}.jpg`) — no client-controlled byte ever touches a filesystem path.
 
 ## Split calculation

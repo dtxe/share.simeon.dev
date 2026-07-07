@@ -31,17 +31,18 @@ func New(pool *pgxpool.Pool) *Store {
 }
 
 type BillSession struct {
-	ID               string
-	OwnerUserID      string
-	Title            *string
-	RestaurantName   *string
-	BillDate         *time.Time
-	SubtotalCents    int64
-	TotalPaidCents   *int64
-	ReceiptImagePath *string
-	ExtractCount     int
-	CreatedAt        time.Time
-	UpdatedAt        time.Time
+	ID                     string
+	OwnerUserID            string
+	Title                  *string
+	RestaurantName         *string
+	BillDate               *time.Time
+	SubtotalCents          int64
+	TotalPaidCents         *int64
+	ReceiptImagePath       *string
+	ReceiptImageCompressed bool
+	ExtractCount           int
+	CreatedAt              time.Time
+	UpdatedAt              time.Time
 }
 
 type Person struct {
@@ -93,7 +94,7 @@ func (s *Store) CreateSession(ctx context.Context, ownerUserID string) (*BillSes
 func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]BillSession, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
-		       total_paid_cents, receipt_image_path, extract_count, created_at, updated_at
+		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
 		FROM bill_sessions
 		WHERE owner_user_id = $1
 		ORDER BY updated_at DESC
@@ -108,7 +109,7 @@ func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]
 		var b BillSession
 		b.OwnerUserID = ownerUserID
 		if err := rows.Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
-			&b.TotalPaidCents, &b.ReceiptImagePath, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
@@ -122,11 +123,11 @@ func (s *Store) GetSession(ctx context.Context, id, ownerUserID string) (*BillSe
 	b.OwnerUserID = ownerUserID
 	err := s.Pool.QueryRow(ctx, `
 		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
-		       total_paid_cents, receipt_image_path, extract_count, created_at, updated_at
+		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
 		FROM bill_sessions
 		WHERE id = $1 AND owner_user_id = $2
 	`, id, ownerUserID).Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
-		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
+		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return nil, noRows(err)
 	}
@@ -162,13 +163,36 @@ func (s *Store) UpdateSession(ctx context.Context, id, ownerUserID string, patch
 	return nil
 }
 
-// SetReceiptImagePath records where an uploaded receipt landed.
+// SetReceiptImagePath records where an uploaded receipt landed. A new upload
+// always resets the compressed flag so the next successful extraction can
+// recompress from the fresh original.
 func (s *Store) SetReceiptImagePath(ctx context.Context, id, ownerUserID, path string) error {
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE bill_sessions
-		SET receipt_image_path = $3, updated_at = now(), expires_at = now() + interval '60 days'
+		SET receipt_image_path = $3,
+		    receipt_image_compressed = false,
+		    updated_at = now(),
+		    expires_at = now() + interval '60 days'
 		WHERE id = $1 AND owner_user_id = $2
 	`, id, ownerUserID, path)
+	if err != nil {
+		return err
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+// MarkReceiptImageCompressed sets the compressed flag after the stored
+// receipt has been asynchronously downscaled/re-encoded following a
+// successful LLM extraction.
+func (s *Store) MarkReceiptImageCompressed(ctx context.Context, id, ownerUserID string) error {
+	tag, err := s.Pool.Exec(ctx, `
+		UPDATE bill_sessions
+		SET receipt_image_compressed = true, updated_at = now()
+		WHERE id = $1 AND owner_user_id = $2
+	`, id, ownerUserID)
 	if err != nil {
 		return err
 	}
@@ -534,11 +558,11 @@ func (s *Store) GetByViewToken(ctx context.Context, rawToken string) (*BillSessi
 	var b BillSession
 	err := s.Pool.QueryRow(ctx, `
 		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
-		       total_paid_cents, receipt_image_path, extract_count, created_at, updated_at
+		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
 		FROM bill_sessions
 		WHERE view_token_hash = $1
 	`, sum[:]).Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
-		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
+		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return nil, noRows(err)
 	}
