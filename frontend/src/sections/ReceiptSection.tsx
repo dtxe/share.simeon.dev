@@ -4,6 +4,7 @@ import { ApiError, type Dish } from '../lib/api'
 import { formatCents } from '../lib/split'
 import { toUploadableImage } from '../lib/image'
 import { Button } from '../components/ui/Button'
+import { ReceiptImage } from '../components/ReceiptImage'
 
 type Stage = 'idle' | 'uploading' | 'parsing' | 'done' | 'failed'
 
@@ -112,7 +113,7 @@ export function ReceiptSection({
 
       {hasReceipt && (
         <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white p-3">
-          {receiptUrl && <img src={receiptUrl} alt="Receipt" className="h-16 w-16 rounded object-cover" />}
+          {receiptUrl && <ReceiptImage src={receiptUrl} size={64} />}
           <div className="flex flex-1 flex-col gap-1">
             {stage === 'parsing' ? (
               <span className="text-sm text-neutral-500">Reading your receipt…</span>
