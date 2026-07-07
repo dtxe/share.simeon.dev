@@ -32,6 +32,19 @@ func TestSaveRejectsImageOverPixelLimit(t *testing.T) {
 	}
 }
 
+func TestSaveRejectsImageOverSideLimit(t *testing.T) {
+	storage := New(t.TempDir())
+	img := pngWithDimensions(MaxImageSide+1, 1)
+
+	_, err := storage.Save("session-id", bytes.NewReader(img))
+	if err == nil {
+		t.Fatal("expected oversized image dimensions to be rejected")
+	}
+	if !strings.Contains(err.Error(), "image dimensions too large") {
+		t.Fatalf("expected dimension-limit error, got %v", err)
+	}
+}
+
 func pngWithDimensions(width, height int) []byte {
 	var out bytes.Buffer
 	out.Write([]byte{0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n'})

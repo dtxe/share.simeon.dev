@@ -23,7 +23,8 @@ import (
 
 const (
 	MaxUploadBytes = 10 << 20 // 10 MiB
-	MaxImagePixels = 40_000_000
+	MaxImagePixels = 4096 * 2160
+	MaxImageSide   = 4096
 	jpegQuality    = 80
 )
 
@@ -74,6 +75,9 @@ func (s *Storage) Save(sessionID string, r io.Reader) (relPath string, err error
 		return "", fmt.Errorf("receipts: reading image dimensions: %w", err)
 	}
 	if int64(cfg.Width)*int64(cfg.Height) > MaxImagePixels {
+		return "", fmt.Errorf("receipts: image dimensions too large (%dx%d)", cfg.Width, cfg.Height)
+	}
+	if cfg.Width > MaxImageSide || cfg.Height > MaxImageSide {
 		return "", fmt.Errorf("receipts: image dimensions too large (%dx%d)", cfg.Width, cfg.Height)
 	}
 
