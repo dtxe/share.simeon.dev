@@ -8,6 +8,7 @@ import (
 )
 
 type meResponse struct {
+	Email      *string `json:"email"`
 	HasEmail   bool `json:"hasEmail"`
 	HasPasskey bool `json:"hasPasskey"`
 }
@@ -19,10 +20,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var hasEmail bool
+	var email *string
 	if err := s.Pool.QueryRow(r.Context(), `
-		SELECT email IS NOT NULL FROM users WHERE id = $1
-	`, userID).Scan(&hasEmail); err != nil {
+		SELECT email FROM users WHERE id = $1
+	`, userID).Scan(&email); err != nil {
 		http.Error(w, "internal error", http.StatusInternalServerError)
 		return
 	}
@@ -36,5 +37,5 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(meResponse{HasEmail: hasEmail, HasPasskey: hasPasskey})
+	_ = json.NewEncoder(w).Encode(meResponse{Email: email, HasEmail: email != nil, HasPasskey: hasPasskey})
 }

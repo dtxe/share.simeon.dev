@@ -44,7 +44,7 @@ export function ProfileDrawer({
           <Drawer.Title className="mb-4 text-base font-semibold">Your account</Drawer.Title>
 
           <div className="mb-4 flex flex-col gap-1 text-sm">
-            <span>Email — {me?.hasEmail ? 'linked' : 'not linked'}</span>
+            <span>Email — {me?.email ?? 'not linked'}</span>
             <span>Passkey — {me?.hasPasskey ? 'added' : 'none'}</span>
           </div>
 
