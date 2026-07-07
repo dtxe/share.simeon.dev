@@ -14,6 +14,10 @@ type Config struct {
 	PublicBaseURL     string
 	CORSAllowedOrigin string
 	TrustedProxy      bool
+	// RealIPHeader, when set and TrustedProxy is true, is the request header
+	// that carries the true client address (e.g. "CF-Connecting-IP" behind
+	// Cloudflare). Empty falls back to X-Forwarded-For's last hop.
+	RealIPHeader string
 
 	DatabaseURL string
 	RedisURL    string
@@ -95,6 +99,7 @@ func Load() (*Config, error) {
 		PublicBaseURL:     getEnv("PUBLIC_BASE_URL", "http://localhost:5173"),
 		CORSAllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", ""),
 		TrustedProxy:      getBool("TRUSTED_PROXY", false),
+		RealIPHeader:      getEnv("REAL_IP_HEADER", ""),
 
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 		RedisURL:    getEnv("REDIS_URL", ""),

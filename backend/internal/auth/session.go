@@ -114,7 +114,7 @@ func (m *Manager) createSessionForTx(ctx context.Context, db execer, userID stri
 
 	expiresAt := time.Now().AddDate(0, 0, m.cfg.AnonSessionTTLDays)
 	ua := r.UserAgent()
-	ip := ClientIP(r, m.cfg.TrustedProxy)
+	ip := ClientIP(r, m.cfg.TrustedProxy, m.cfg.RealIPHeader)
 
 	var sessID string
 	var lastSeen time.Time
@@ -209,14 +209,43 @@ func (m *Manager) writeToken(w http.ResponseWriter, raw string) {
 	})
 }
 
-// ClientIP trusts X-Forwarded-For only as far as our own reverse proxy: the
-// header can be a client-supplied comma-separated chain, and only the
-// *last* hop is the address our proxy itself observed on the socket — the
-// earlier entries are whatever the client chose to send and must not be
-// trusted (using the raw header, or its first entry, lets a client spoof
-// its rate-limit/audit identity for free).
-func ClientIP(r *http.Request, trustedProxy bool) string {
+// ClientIP resolves the caller's address for rate-limiting and audit.
+//
+// When trustedProxy is true and realIPHeader is set (e.g. "CF-Connecting-IP"
+// behind Cloudflare), that header's value is preferred: it is attested by the
+// trusted proxy itself (Cloudflare's edge overwrites any client-supplied
+// CF-Connecting-IP, and the only ingress to the backend is through that
+// proxy), so it carries the true client address. This matters behind
+// cloudflared -> Caddy -> backend, where the X-Forwarded-For *last* hop is
+// cloudflared's address and would otherwise collapse every visitor into one
+// rate-limit bucket.
+//
+// Without a real-IP header we fall back to X-Forwarded-For's last hop — the
+// address our own proxy observed on its socket; the earlier XFF entries are
+// whatever the client chose to send and must not be trusted (using the raw
+// header, or its first entry, lets a client spoof its rate-limit/audit
+// identity for free). Finally, when not behind a trusted proxy at all, we use
+// r.RemoteAddr directly.
+//
+// realIPHeader is gated on trustedProxy so a dev server with no proxy in
+// front (TRUSTED_PROXY=false) always ignores it, even if a client sets the
+// header.
+func ClientIP(r *http.Request, trustedProxy bool, realIPHeader string) string {
 	if trustedProxy {
+		if realIPHeader != "" {
+			if v := strings.TrimSpace(r.Header.Get(realIPHeader)); v != "" {
+				// The header should hold a single address, but if something
+				// forwards a comma-separated chain, take the first entry
+				// (the original client) — consistent with how a trusted
+				// real-IP header is meant to be consumed.
+				if comma := strings.Index(v, ","); comma >= 0 {
+					v = strings.TrimSpace(v[:comma])
+				}
+				if v != "" {
+					return v
+				}
+			}
+		}
 		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
 			parts := strings.Split(xff, ",")
 			if last := strings.TrimSpace(parts[len(parts)-1]); last != "" {

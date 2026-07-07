@@ -114,7 +114,7 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ip := auth.ClientIP(r, s.Cfg.TrustedProxy)
+	ip := auth.ClientIP(r, s.Cfg.TrustedProxy, s.Cfg.RealIPHeader)
 	if allowed, err := s.RL.AllowExtractPerIP(ctx, ip); err == nil && !allowed {
 		writeJSONError(w, http.StatusTooManyRequests, "too many requests")
 		return

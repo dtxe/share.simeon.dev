@@ -32,7 +32,7 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 // call path and can never reach a mutating handler.
 func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 	token := chi.URLParam(r, "token")
-	ip := auth.ClientIP(r, s.Cfg.TrustedProxy)
+	ip := auth.ClientIP(r, s.Cfg.TrustedProxy, s.Cfg.RealIPHeader)
 
 	sess, result, err := s.Store.GetBreakdownByViewToken(r.Context(), token)
 	if err != nil {

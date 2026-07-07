@@ -37,7 +37,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ip := auth.ClientIP(r, s.Cfg.TrustedProxy)
+	ip := auth.ClientIP(r, s.Cfg.TrustedProxy, s.Cfg.RealIPHeader)
 	if allowed, err := s.RL.AllowCreateSessionPerIP(r.Context(), ip); err == nil && !allowed {
 		writeJSONError(w, http.StatusTooManyRequests, "too many requests")
 		return
