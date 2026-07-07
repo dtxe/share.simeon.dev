@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { useInvalidateMe } from './useMe'
+import { useMe, useInvalidateMe } from './useMe'
 import { api, ApiError } from '../lib/api'
 import { createPasskey, getPasskeyAssertion, supportsPasskeys } from '../lib/passkey'
 
@@ -7,12 +7,14 @@ export type OtpStage = 'idle' | 'email' | 'code'
 export type PasskeyBusy = 'register' | 'login' | null
 
 export function useAuthActions() {
+  const { data: me } = useMe()
   const [stage, setStage] = useState<OtpStage>('idle')
   const [email, setEmail] = useState('')
   const [code, setCode] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<PasskeyBusy>(null)
   const invalidateMe = useInvalidateMe()
+  const passkeysSupported = (me?.passkeysEnabled ?? false) && supportsPasskeys()
 
   async function requestCode() {
     setError(null)
@@ -75,6 +77,6 @@ export function useAuthActions() {
     verifyCode,
     runPasskey,
     reset,
-    supportsPasskeys: supportsPasskeys(),
+    passkeysSupported,
   }
 }

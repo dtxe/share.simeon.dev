@@ -20,13 +20,15 @@ export default function HistoryScreen() {
       <AppHeader />
       <h1 className="text-lg font-semibold">Your bills</h1>
 
-      {me && !me.hasEmail && !me.hasPasskey && (
+      {me && !me.hasEmail && (me.passkeysEnabled ? !me.hasPasskey : true) && (
         <button
           type="button"
           onClick={() => setProfileOpen(true)}
           className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-left text-sm"
         >
-          Add an email or passkey to keep your bills across devices.
+          {me.passkeysEnabled
+            ? 'Add an email or passkey to keep your bills across devices.'
+            : 'Add an email to keep your bills across devices.'}
         </button>
       )}
 

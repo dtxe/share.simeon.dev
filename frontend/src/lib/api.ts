@@ -107,7 +107,7 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
-  getMe: () => request<{ email: string | null; hasEmail: boolean; hasPasskey: boolean }>('/me'),
+  getMe: () => request<{ email: string | null; hasEmail: boolean; hasPasskey: boolean; passkeysEnabled: boolean }>('/me'),
   getMyBills: () => request<SessionSummary[]>('/me/bills'),
 
   beginPasskeyRegistration: () =>

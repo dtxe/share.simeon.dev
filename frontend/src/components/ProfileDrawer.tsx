@@ -45,7 +45,7 @@ export function ProfileDrawer({
 
           <div className="mb-4 flex flex-col gap-1 text-sm">
             <span>Email — {me?.email ?? 'not linked'}</span>
-            <span>Passkey — {me?.hasPasskey ? 'added' : 'none'}</span>
+            {me?.passkeysEnabled && <span>Passkey — {me.hasPasskey ? 'added' : 'none'}</span>}
           </div>
 
           {auth.stage === 'idle' && (
@@ -53,7 +53,7 @@ export function ProfileDrawer({
               <Button variant="secondary" onClick={() => auth.setStage('email')}>
                 Add email
               </Button>
-              {auth.supportsPasskeys && (
+              {auth.passkeysSupported && (
                 <>
                   <Button variant="secondary" disabled={auth.busy !== null} onClick={() => void auth.runPasskey('register')}>
                     Add passkey
@@ -97,7 +97,7 @@ export function ProfileDrawer({
             </div>
           )}
 
-          {auth.busy && (
+          {auth.busy && auth.passkeysSupported && (
             <p className="mt-3 text-sm text-neutral-500">
               Working on {auth.busy === 'register' ? 'creating' : 'using'} your passkey…
             </p>
