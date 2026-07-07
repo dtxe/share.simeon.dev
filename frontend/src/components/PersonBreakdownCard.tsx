@@ -7,7 +7,6 @@ interface BreakdownDish {
   id: string
   name: string
   unitPriceCents: number
-  quantity: number
 }
 
 interface BreakdownPortion {
@@ -41,8 +40,7 @@ export function PersonBreakdownCard({
     if (mine <= 0) continue
     const total = totalSharesByDish.get(d.id) ?? 0
     if (total <= 0) continue
-    const lineTotal = Math.round(d.unitPriceCents * d.quantity)
-    const base = Math.round((lineTotal * mine) / total)
+    const base = Math.round((d.unitPriceCents * mine) / total)
     baseSum += base
     lines.push({ label: d.name, pct: `${formatShare(mine)}/${formatShare(total)} = ${Math.round((mine / total) * 100)}%`, cents: base })
   }

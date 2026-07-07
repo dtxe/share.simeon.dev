@@ -29,7 +29,6 @@ export interface Dish {
   sessionId: string
   name: string
   unitPriceCents: number
-  quantity: number
   sortOrder: number
   source: 'manual' | 'llm_extracted'
 }
@@ -144,11 +143,11 @@ export const api = {
 
   replaceDishes: (
     sessionId: string,
-    dishes: { name: string; unitPriceCents: number; quantity: number; source?: string }[],
+    dishes: { name: string; unitPriceCents: number; source?: string }[],
   ) => request<Dish[]>(`/sessions/${enc(sessionId)}/dishes/bulk`, { method: 'POST', body: JSON.stringify({ dishes }) }),
-  addDish: (sessionId: string, dish: { name: string; unitPriceCents: number; quantity: number }) =>
+  addDish: (sessionId: string, dish: { name: string; unitPriceCents: number }) =>
     request<Dish>(`/sessions/${enc(sessionId)}/dishes`, { method: 'POST', body: JSON.stringify(dish) }),
-  updateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; quantity: number }>) =>
+  updateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number }>) =>
     request<void>(`/dishes/${enc(dishId)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteDish: (dishId: string) => request<void>(`/dishes/${enc(dishId)}`, { method: 'DELETE' }),
 
@@ -192,7 +191,7 @@ export const api = {
       subtotalCents?: number
       tipCents?: number
       totalPaidCents?: number
-      items: { name: string; priceCents: number; quantity: number }[]
+      items: { name: string; priceCents: number }[]
     }>(`/sessions/${enc(sessionId)}/extract`, { method: 'POST' }),
 
   createShare: (sessionId: string) =>
@@ -207,7 +206,7 @@ export const api = {
       totalPaidCents: number | null
       hasReceipt: boolean
       people: { id: string; name: string; sortOrder: number }[]
-      dishes?: { id: string; name: string; unitPriceCents: number; quantity: number }[]
+      dishes?: { id: string; name: string; unitPriceCents: number }[]
       portions?: { dishId: string; personId: string; shares: number }[]
       result: BreakdownResult
     }>(`/view/${enc(token)}`),

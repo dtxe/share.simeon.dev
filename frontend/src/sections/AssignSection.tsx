@@ -87,7 +87,7 @@ export function AssignSection({
                         ))}
                       </span>
                     )}
-                    <span className="font-receipt text-sm">{formatCents(Math.round(d.unitPriceCents * d.quantity))}</span>
+                    <span className="font-receipt text-sm">{formatCents(d.unitPriceCents)}</span>
                   </span>
                 </button>
                 {expanded && (
@@ -144,7 +144,7 @@ export function AssignSection({
                           <span className="text-sm">{d.name}</span>
                           <span className="flex items-center gap-2">
                             <span className="font-receipt text-xs text-[var(--color-ink-soft)]">
-                              {formatCents(Math.round(d.unitPriceCents * d.quantity))}
+                              {formatCents(d.unitPriceCents)}
                             </span>
                             <Stepper value={mine} onChange={(next) => onAdjust(d.id, p.id, next)} />
                           </span>

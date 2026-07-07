@@ -14,7 +14,7 @@ export function previewOwed(
 ): Record<string, number> {
   const lineTotal = new Map<string, number>()
   const dishTotalShares = new Map<string, number>()
-  for (const d of dishes) lineTotal.set(d.id, Math.round(d.unitPriceCents * d.quantity))
+  for (const d of dishes) lineTotal.set(d.id, d.unitPriceCents)
   for (const p of portions) dishTotalShares.set(p.dishId, (dishTotalShares.get(p.dishId) ?? 0) + p.shares)
 
   let subtotal = 0

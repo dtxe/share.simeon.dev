@@ -175,12 +175,12 @@ export default function BillWorkspace() {
     }
   }
 
-  const addDish = async (dish: { name: string; unitPriceCents: number; quantity: number }) => {
+  const addDish = async (dish: { name: string; unitPriceCents: number }) => {
     const id = await ensure()
     await api.addDish(id, dish)
     invalidate(id)
   }
-  const updateDish = async (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; quantity: number }>) => {
+  const updateDish = async (dishId: string, patch: Partial<{ name: string; unitPriceCents: number }>) => {
     await api.updateDish(dishId, patch)
     if (routeId) invalidate(routeId)
   }

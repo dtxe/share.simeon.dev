@@ -30,8 +30,8 @@ export function ReceiptSection({
   error: string | null
   retryable: boolean
   onUpload: (file: File) => Promise<void>
-  onAddDish: (dish: { name: string; unitPriceCents: number; quantity: number }) => Promise<void>
-  onUpdateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; quantity: number }>) => Promise<void>
+  onAddDish: (dish: { name: string; unitPriceCents: number }) => Promise<void>
+  onUpdateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number }>) => Promise<void>
   onDeleteDish: (dishId: string) => Promise<void>
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -141,8 +141,7 @@ function ShimmerRow() {
   return (
     <div className="flex items-center gap-2 p-3">
       <div className="h-4 flex-1 animate-pulse rounded bg-[var(--color-border)]" />
-      <div className="h-4 w-12 animate-pulse rounded bg-[var(--color-border)]" />
-      <div className="h-4 w-16 animate-pulse rounded bg-[var(--color-border)]" />
+      <div className="h-4 w-20 animate-pulse rounded bg-[var(--color-border)]" />
     </div>
   )
 }
@@ -153,19 +152,16 @@ function DishEditorRow({
   onDelete,
 }: {
   dish: Dish
-  onUpdate: (patch: Partial<{ name: string; unitPriceCents: number; quantity: number }>) => Promise<void>
+  onUpdate: (patch: Partial<{ name: string; unitPriceCents: number }>) => Promise<void>
   onDelete: () => Promise<void>
 }) {
   const [name, setName] = useState(dish.name)
-  const [quantity, setQuantity] = useState(String(dish.quantity))
   const [priceDollars, setPriceDollars] = useState((dish.unitPriceCents / 100).toFixed(2))
 
   function commit() {
-    const patch: Partial<{ name: string; unitPriceCents: number; quantity: number }> = {}
+    const patch: Partial<{ name: string; unitPriceCents: number }> = {}
     const trimmedName = name.trim()
     if (trimmedName && trimmedName !== dish.name) patch.name = trimmedName
-    const qty = Number(quantity) || 1
-    if (qty !== dish.quantity) patch.quantity = qty
     const cents = Math.round(parseFloat(priceDollars || '0') * 100) || 0
     if (cents !== dish.unitPriceCents) patch.unitPriceCents = cents
     if (Object.keys(patch).length > 0) void onUpdate(patch)
@@ -179,14 +175,6 @@ function DishEditorRow({
         onBlur={commit}
         placeholder="Item name"
         className="min-w-0 flex-1 border-none bg-transparent focus:outline-none"
-      />
-      <input
-        value={quantity}
-        onChange={(e) => setQuantity(e.target.value)}
-        onBlur={commit}
-        type="number"
-        min={1}
-        className="w-12 rounded border border-[var(--color-border)] px-1 py-1 text-center text-sm font-receipt"
       />
       <input
         value={priceDollars}
@@ -203,27 +191,24 @@ function DishEditorRow({
   )
 }
 
-function AddDishRow({ onAdd }: { onAdd: (dish: { name: string; unitPriceCents: number; quantity: number }) => Promise<void> }) {
+function AddDishRow({ onAdd }: { onAdd: (dish: { name: string; unitPriceCents: number }) => Promise<void> }) {
   const [name, setName] = useState('')
-  const [quantity, setQuantity] = useState('1')
   const [priceDollars, setPriceDollars] = useState('')
   // Guards against both a premature submit while the user is still tabbing
-  // through name/quantity (this only fires from the price field, the last
-  // one in the row), and a double-submit race if price's blur fires again
-  // before the async add's local-state reset has landed.
+  // through the row (this only fires from the price field, the last one in
+  // the row), and a double-submit race if price's blur fires again before the
+  // async add's local-state reset has landed.
   const submittingRef = useRef(false)
 
   async function commit() {
     const trimmedName = name.trim()
     if (!trimmedName || submittingRef.current) return
     submittingRef.current = true
-    const qty = Number(quantity) || 1
     const cents = Math.round(parseFloat(priceDollars || '0') * 100) || 0
     setName('')
-    setQuantity('1')
     setPriceDollars('')
     try {
-      await onAdd({ name: trimmedName, unitPriceCents: cents, quantity: qty })
+      await onAdd({ name: trimmedName, unitPriceCents: cents })
     } finally {
       submittingRef.current = false
     }
@@ -236,13 +221,6 @@ function AddDishRow({ onAdd }: { onAdd: (dish: { name: string; unitPriceCents: n
         onChange={(e) => setName(e.target.value)}
         placeholder="+ Add item"
         className="min-w-0 flex-1 border-none bg-transparent text-[var(--color-accent)] focus:outline-none"
-      />
-      <input
-        value={quantity}
-        onChange={(e) => setQuantity(e.target.value)}
-        type="number"
-        min={1}
-        className="w-12 rounded border border-[var(--color-border)] px-1 py-1 text-center text-sm font-receipt"
       />
       <input
         value={priceDollars}
