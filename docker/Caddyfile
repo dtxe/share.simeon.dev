@@ -1,4 +1,4 @@
-:80 {
+:8001 {
 	encode gzip
 
 	# Defense-in-depth headers for the production HTTPS host. HSTS is a
