@@ -28,7 +28,13 @@ is printed. Only include amounts clearly printed on the receipt; if a field can'
 omit it rather than guessing wildly.
 Call the extract_receipt function with the result — do not respond in plain text.`
 
-const extractFunctionName = "extract_receipt"
+const minimizeReasoningPromptSuffix = `Minimize thinking: use only the reasoning needed to read the receipt, then call the extract_receipt function directly.`
+
+const (
+	extractFunctionName = "extract_receipt"
+	extractionMaxTokens = 4000
+	kimiK2P7CodeModel   = "accounts/fireworks/models/kimi-k2p7-code"
+)
 
 type Client struct {
 	BaseURL    string
@@ -88,7 +94,7 @@ type chatRequest struct {
 	Messages        []chatMessage `json:"messages"`
 	Tools           []toolDef     `json:"tools"`
 	ToolChoice      toolChoice    `json:"tool_choice"`
-	ReasoningEffort string        `json:"reasoning_effort"`
+	ReasoningEffort string        `json:"reasoning_effort,omitempty"`
 	MaxTokens       int           `json:"max_tokens"`
 }
 
@@ -136,6 +142,7 @@ var extractionSchema = map[string]any{
 
 func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType string) (*llm.Result, error) {
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(image))
+	prompt := extractionPromptForModel(c.Model)
 
 	reqBody := chatRequest{
 		Model: c.Model,
@@ -143,7 +150,7 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 			{
 				Role: "user",
 				Content: []contentPart{
-					{Type: "text", Text: extractionPrompt},
+					{Type: "text", Text: prompt},
 					{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
 				},
 			},
@@ -161,8 +168,8 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 			Type:     "function",
 			Function: toolChoiceTarget{Name: extractFunctionName},
 		},
-		ReasoningEffort: "low",
-		MaxTokens:       2000,
+		ReasoningEffort: reasoningEffortForModel(c.Model),
+		MaxTokens:       extractionMaxTokens,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -231,4 +238,20 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 			CompletionTokens: chatResp.Usage.CompletionTokens,
 		},
 	}, nil
+}
+
+func extractionPromptForModel(model string) string {
+	if reasoningEffortForModel(model) != "" {
+		return extractionPrompt
+	}
+	return extractionPrompt + "\n\n" + minimizeReasoningPromptSuffix
+}
+
+func reasoningEffortForModel(model string) string {
+	switch model {
+	case kimiK2P7CodeModel:
+		return "low"
+	default:
+		return ""
+	}
 }

@@ -3,8 +3,10 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -70,6 +72,9 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 	if gotModel != "test-model" {
 		t.Errorf("model = %q, want %q", gotModel, "test-model")
 	}
+	if gotBody.MaxTokens != extractionMaxTokens {
+		t.Errorf("max_tokens = %d, want %d", gotBody.MaxTokens, extractionMaxTokens)
+	}
 	if result.Receipt.RestaurantName != "Thai Basil" {
 		t.Errorf("restaurant name = %q, want %q", result.Receipt.RestaurantName, "Thai Basil")
 	}
@@ -82,6 +87,81 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 	}
 	if result.Usage.PromptTokens != 500 || result.Usage.CompletionTokens != 80 {
 		t.Errorf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
+	tests := []struct {
+		name                 string
+		model                string
+		wantReasoningPresent bool
+		wantReasoning        string
+		wantMinimizePrompt   bool
+	}{
+		{
+			name:                 "kimi low reasoning effort",
+			model:                kimiK2P7CodeModel,
+			wantReasoningPresent: true,
+			wantReasoning:        "low",
+		},
+		{
+			name:               "minimax prompt guidance",
+			model:              "accounts/fireworks/models/minimax-m3",
+			wantMinimizePrompt: true,
+		},
+		{
+			name:               "unknown model prompt guidance",
+			model:              "accounts/example/models/custom",
+			wantMinimizePrompt: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotBody chatRequest
+			var gotRaw map[string]any
+
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				if err != nil {
+					t.Errorf("reading request body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotBody); err != nil {
+					t.Errorf("decoding request body: %v", err)
+				}
+				if err := json.Unmarshal(body, &gotRaw); err != nil {
+					t.Errorf("decoding raw request body: %v", err)
+				}
+
+				writeReceiptResponse(t, w, `{"items":[]}`)
+			}))
+			defer srv.Close()
+
+			c := New(srv.URL, "test-key", tt.model)
+			_, err := c.ExtractReceipt(context.Background(), []byte("fake-jpeg-bytes"), "image/jpeg")
+			if err != nil {
+				t.Fatalf("ExtractReceipt: %v", err)
+			}
+
+			gotReasoning, gotReasoningPresent := gotRaw["reasoning_effort"]
+			if gotReasoningPresent != tt.wantReasoningPresent {
+				t.Fatalf("reasoning_effort present = %v, want %v", gotReasoningPresent, tt.wantReasoningPresent)
+			}
+			if tt.wantReasoningPresent && gotReasoning != tt.wantReasoning {
+				t.Fatalf("reasoning_effort = %v, want %q", gotReasoning, tt.wantReasoning)
+			}
+			if gotBody.MaxTokens != extractionMaxTokens {
+				t.Fatalf("max_tokens = %d, want %d", gotBody.MaxTokens, extractionMaxTokens)
+			}
+			if len(gotBody.Messages) != 1 || len(gotBody.Messages[0].Content) == 0 {
+				t.Fatalf("expected prompt content, got %+v", gotBody.Messages)
+			}
+
+			gotMinimizePrompt := strings.Contains(gotBody.Messages[0].Content[0].Text, minimizeReasoningPromptSuffix)
+			if gotMinimizePrompt != tt.wantMinimizePrompt {
+				t.Fatalf("minimize-thinking prompt present = %v, want %v", gotMinimizePrompt, tt.wantMinimizePrompt)
+			}
+		})
 	}
 }
 
@@ -130,5 +210,35 @@ func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 	_, err := c.ExtractReceipt(context.Background(), []byte("x"), "image/jpeg")
 	if err == nil {
 		t.Fatal("expected decode to reject an unexpected field in the model's JSON output")
+	}
+}
+
+func writeReceiptResponse(t *testing.T, w http.ResponseWriter, args string) {
+	t.Helper()
+
+	resp := chatResponse{}
+	resp.Choices = make([]struct {
+		Message struct {
+			Content   string `json:"content"`
+			ToolCalls []struct {
+				Function struct {
+					Name      string `json:"name"`
+					Arguments string `json:"arguments"`
+				} `json:"function"`
+			} `json:"tool_calls"`
+		} `json:"message"`
+	}, 1)
+	resp.Choices[0].Message.ToolCalls = make([]struct {
+		Function struct {
+			Name      string `json:"name"`
+			Arguments string `json:"arguments"`
+		} `json:"function"`
+	}, 1)
+	resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
+	resp.Choices[0].Message.ToolCalls[0].Function.Arguments = args
+
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		t.Errorf("encoding response: %v", err)
 	}
 }
