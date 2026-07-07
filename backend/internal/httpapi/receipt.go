@@ -208,6 +208,40 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Best-effort metadata fill: never clobber a value the user already
+	// entered (title is left alone entirely — the client suggests one from
+	// restaurantName/date on the Settle screen instead of us writing it here).
+	patch := store.SessionPatch{}
+	hasPatch := false
+	if name := strings.TrimSpace(result.Receipt.RestaurantName); name != "" {
+		if len(name) > 120 {
+			name = name[:120]
+		}
+		patch.RestaurantName = &name
+		hasPatch = true
+	}
+	if result.Receipt.Date != "" {
+		if parsed, err := time.Parse("2006-01-02", result.Receipt.Date); err == nil {
+			patch.BillDate = &parsed
+			hasPatch = true
+		}
+	}
+	if sess.TotalPaidCents == nil {
+		total := result.Receipt.TotalPaidCents
+		if total <= 0 && result.Receipt.SubtotalCents > 0 && result.Receipt.TipCents > 0 {
+			total = result.Receipt.SubtotalCents + result.Receipt.TipCents
+		}
+		if total > 0 && total <= 5_000_000_00 {
+			patch.TotalPaidCents = &total
+			hasPatch = true
+		}
+	}
+	if hasPatch {
+		if err := s.Store.UpdateSession(ctx, sessionID, userID, patch); err != nil && s.Cfg.Debug {
+			log.Printf("debug: extract metadata patch session=%s: %v", sessionID, err)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, result.Receipt)
 }
 

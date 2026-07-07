@@ -21,7 +21,11 @@ import (
 
 const extractionPrompt = `You are extracting structured data from a photo of a restaurant receipt.
 Return the restaurant name, the date (ISO 8601, best effort), and every line item with its name,
-price in integer cents, and quantity. If a field can't be determined, omit it rather than guessing wildly.
+price in integer cents, and quantity. Also return, in integer cents: the pre-tax subtotal
+(subtotalCents), any tip/gratuity amount (tipCents), and the final total actually charged including
+tax and tip (totalPaidCents) — prefer a credit-card/charged-amount line for totalPaidCents when one
+is printed. Only include amounts clearly printed on the receipt; if a field can't be determined,
+omit it rather than guessing wildly.
 Call the extract_receipt function with the result — do not respond in plain text.`
 
 const extractFunctionName = "extract_receipt"
@@ -111,6 +115,9 @@ var extractionSchema = map[string]any{
 	"properties": map[string]any{
 		"restaurantName": map[string]any{"type": "string"},
 		"date":           map[string]any{"type": "string"},
+		"subtotalCents":  map[string]any{"type": "integer"},
+		"tipCents":       map[string]any{"type": "integer"},
+		"totalPaidCents": map[string]any{"type": "integer"},
 		"items": map[string]any{
 			"type": "array",
 			"items": map[string]any{

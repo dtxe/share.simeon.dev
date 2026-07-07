@@ -60,6 +60,36 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
+	dishes, err := s.Store.ListDishesPublic(r.Context(), sess.ID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	// Minimal shape — store.Dish also carries sessionId; never leak it here.
+	publicDishes := make([]map[string]any, 0, len(dishes))
+	for _, d := range dishes {
+		publicDishes = append(publicDishes, map[string]any{
+			"id":             d.ID,
+			"name":           d.Name,
+			"unitPriceCents": d.UnitPriceCents,
+			"quantity":       d.Quantity,
+		})
+	}
+
+	portions, err := s.Store.ListPortionsPublic(r.Context(), sess.ID)
+	if err != nil {
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	publicPortions := make([]map[string]any, 0, len(portions))
+	for _, p := range portions {
+		publicPortions = append(publicPortions, map[string]any{
+			"dishId":   p.DishID,
+			"personId": p.PersonID,
+			"shares":   p.Shares,
+		})
+	}
+
 	// Deliberately built by hand (not sessionSummary()) so the internal
 	// session UUID and any future field added to the owner-facing summary
 	// don't leak here just because someone forgot to update this endpoint.
@@ -71,6 +101,8 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 		"totalPaidCents": sess.TotalPaidCents,
 		"hasReceipt":     sess.ReceiptImagePath != nil,
 		"people":         publicPeople,
+		"dishes":         publicDishes,
+		"portions":       publicPortions,
 		"result":         result,
 	})
 }

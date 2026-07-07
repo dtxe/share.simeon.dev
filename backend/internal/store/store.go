@@ -261,6 +261,36 @@ func (s *Store) ListPeoplePublic(ctx context.Context, sessionID string) ([]Perso
 	return s.listPeopleUnchecked(ctx, sessionID)
 }
 
+// ListDishesPublic mirrors ListPeoplePublic — authorization already proven
+// by a valid view token, no owner check needed.
+func (s *Store) ListDishesPublic(ctx context.Context, sessionID string) ([]Dish, error) {
+	return s.listDishesUnchecked(ctx, sessionID)
+}
+
+// ListPortionsPublic mirrors ListPeoplePublic — authorization already proven
+// by a valid view token, no owner check needed.
+func (s *Store) ListPortionsPublic(ctx context.Context, sessionID string) ([]Portion, error) {
+	rows, err := s.Pool.Query(ctx, `
+		SELECT portions.dish_id::text, portions.person_id::text, portions.shares
+		FROM portions
+		JOIN dishes ON dishes.id = portions.dish_id
+		WHERE dishes.session_id = $1
+	`, sessionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Portion{}
+	for rows.Next() {
+		var p Portion
+		if err := rows.Scan(&p.DishID, &p.PersonID, &p.Shares); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
 func (s *Store) listPeopleUnchecked(ctx context.Context, sessionID string) ([]Person, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT id::text, name, sort_order FROM people
@@ -349,6 +379,10 @@ func (s *Store) ListDishes(ctx context.Context, sessionID, ownerUserID string) (
 	if _, err := s.GetSession(ctx, sessionID, ownerUserID); err != nil {
 		return nil, err
 	}
+	return s.listDishesUnchecked(ctx, sessionID)
+}
+
+func (s *Store) listDishesUnchecked(ctx context.Context, sessionID string) ([]Dish, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT id::text, name, unit_price_cents, quantity, sort_order, source
 		FROM dishes WHERE session_id = $1 ORDER BY sort_order
@@ -367,6 +401,37 @@ func (s *Store) ListDishes(ctx context.Context, sessionID, ownerUserID string) (
 		out = append(out, d)
 	}
 	return out, rows.Err()
+}
+
+// AddDish appends a single dish to a bill the caller owns, without touching
+// any existing dish or its portions — unlike ReplaceDishes, which is
+// reserved for the extraction bulk-replace path.
+func (s *Store) AddDish(ctx context.Context, sessionID, ownerUserID string, d NewDish) (*Dish, error) {
+	if _, err := s.GetSession(ctx, sessionID, ownerUserID); err != nil {
+		return nil, err
+	}
+	source := d.Source
+	if source == "" {
+		source = "manual"
+	}
+	var dish Dish
+	dish.SessionID = sessionID
+	dish.Name = d.Name
+	dish.UnitPriceCents = d.UnitPriceCents
+	dish.Quantity = d.Quantity
+	dish.Source = source
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO dishes (session_id, name, unit_price_cents, quantity, sort_order, source)
+		VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM dishes WHERE session_id = $1), $5)
+		RETURNING id::text, sort_order
+	`, sessionID, d.Name, d.UnitPriceCents, d.Quantity, source).Scan(&dish.ID, &dish.SortOrder)
+	if err != nil {
+		return nil, err
+	}
+	if err := s.recalculateSubtotalForDish(ctx, dish.ID); err != nil {
+		return nil, err
+	}
+	return &dish, nil
 }
 
 // UpsertPortion sets (dishID, personID)'s share count. Scoped to a dish that

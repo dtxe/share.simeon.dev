@@ -294,6 +294,49 @@ func (s *Server) handleReplaceDishes(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, dishes)
 }
 
+// handleAddDish appends a single dish without touching any existing dish or
+// its portions — unlike handleReplaceDishes (bulk, reserved for /extract),
+// this is what the item editor uses for manual add-a-row.
+func (s *Server) handleAddDish(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUser(w, r)
+	if !ok {
+		return
+	}
+	sessionID := chi.URLParam(r, "id")
+
+	var body dishInput
+	dec := json.NewDecoder(io.LimitReader(r.Body, 4<<10))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&body); err != nil {
+		writeJSONError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if len(body.Name) < 1 || len(body.Name) > 100 {
+		writeJSONError(w, http.StatusBadRequest, "dish name must be 1-100 characters")
+		return
+	}
+	if body.UnitPriceCents < 0 || body.UnitPriceCents > 100_000_00 {
+		writeJSONError(w, http.StatusBadRequest, "unitPriceCents out of range")
+		return
+	}
+	if body.Quantity <= 0 {
+		writeJSONError(w, http.StatusBadRequest, "quantity must be positive")
+		return
+	}
+
+	dish, err := s.Store.AddDish(r.Context(), sessionID, userID, store.NewDish{
+		Name:           body.Name,
+		UnitPriceCents: body.UnitPriceCents,
+		Quantity:       body.Quantity,
+		Source:         "manual",
+	})
+	if err != nil {
+		storeErrToStatus(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, dish)
+}
+
 func (s *Server) handleDeleteDish(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUser(w, r)
 	if !ok {

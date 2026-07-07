@@ -19,8 +19,8 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 		}
 		gotModel = gotBody.Model
 
-		if gotBody.ResponseFormat.Type != "json_schema" {
-			t.Errorf("expected json_schema response_format, got %q", gotBody.ResponseFormat.Type)
+		if gotBody.ToolChoice.Function.Name != extractFunctionName {
+			t.Errorf("expected tool_choice targeting %q, got %q", extractFunctionName, gotBody.ToolChoice.Function.Name)
 		}
 		if len(gotBody.Messages) != 1 || len(gotBody.Messages[0].Content) != 2 {
 			t.Fatalf("expected one message with text+image_url parts, got %+v", gotBody.Messages)
@@ -29,16 +29,27 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 			t.Fatalf("expected image_url content part")
 		}
 
+		args := `{"restaurantName":"Thai Basil","date":"2026-07-05","subtotalCents":1200,"tipCents":240,"totalPaidCents":1560,"items":[{"name":"Pad Thai","priceCents":1200,"quantity":1}]}`
 		resp := chatResponse{}
-		resp.Choices = []struct {
+		resp.Choices = make([]struct {
 			Message struct {
-				Content string `json:"content"`
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"message"`
-		}{
-			{Message: struct {
-				Content string `json:"content"`
-			}{Content: `{"restaurantName":"Thai Basil","date":"2026-07-05","items":[{"name":"Pad Thai","priceCents":1200,"quantity":1}]}`}},
-		}
+		}, 1)
+		resp.Choices[0].Message.ToolCalls = make([]struct {
+			Function struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			} `json:"function"`
+		}, 1)
+		resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
+		resp.Choices[0].Message.ToolCalls[0].Function.Arguments = args
 		resp.Usage.PromptTokens = 500
 		resp.Usage.CompletionTokens = 80
 
@@ -61,6 +72,10 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 	}
 	if result.Receipt.RestaurantName != "Thai Basil" {
 		t.Errorf("restaurant name = %q, want %q", result.Receipt.RestaurantName, "Thai Basil")
+	}
+	if result.Receipt.SubtotalCents != 1200 || result.Receipt.TipCents != 240 || result.Receipt.TotalPaidCents != 1560 {
+		t.Errorf("unexpected totals: subtotal=%d tip=%d totalPaid=%d",
+			result.Receipt.SubtotalCents, result.Receipt.TipCents, result.Receipt.TotalPaidCents)
 	}
 	if len(result.Receipt.Items) != 1 || result.Receipt.Items[0].Name != "Pad Thai" || result.Receipt.Items[0].PriceCents != 1200 {
 		t.Errorf("unexpected items: %+v", result.Receipt.Items)
@@ -87,15 +102,25 @@ func TestExtractReceiptUpstreamErrorStatus(t *testing.T) {
 func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		resp := chatResponse{}
-		resp.Choices = []struct {
+		resp.Choices = make([]struct {
 			Message struct {
-				Content string `json:"content"`
+				Content   string `json:"content"`
+				ToolCalls []struct {
+					Function struct {
+						Name      string `json:"name"`
+						Arguments string `json:"arguments"`
+					} `json:"function"`
+				} `json:"tool_calls"`
 			} `json:"message"`
-		}{
-			{Message: struct {
-				Content string `json:"content"`
-			}{Content: `{"items":[],"unexpected_field":"should cause a decode error"}`}},
-		}
+		}, 1)
+		resp.Choices[0].Message.ToolCalls = make([]struct {
+			Function struct {
+				Name      string `json:"name"`
+				Arguments string `json:"arguments"`
+			} `json:"function"`
+		}, 1)
+		resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
+		resp.Choices[0].Message.ToolCalls[0].Function.Arguments = `{"items":[],"unexpected_field":"should cause a decode error"}`
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
 	}))

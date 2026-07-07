@@ -74,6 +74,7 @@ func NewRouter(s *Server) http.Handler {
 		api.Delete("/people/{personId}", s.handleDeletePerson)
 
 		api.Post("/sessions/{id}/dishes/bulk", s.handleReplaceDishes)
+		api.Post("/sessions/{id}/dishes", s.handleAddDish)
 		api.Patch("/dishes/{dishId}", s.handleUpdateDish)
 		api.Delete("/dishes/{dishId}", s.handleDeleteDish)
 

@@ -15,6 +15,9 @@ type ExtractedItem struct {
 type ExtractedReceipt struct {
 	RestaurantName string          `json:"restaurantName,omitempty"`
 	Date           string          `json:"date,omitempty"` // best-effort ISO 8601
+	SubtotalCents  int64           `json:"subtotalCents,omitempty"`
+	TipCents       int64           `json:"tipCents,omitempty"`
+	TotalPaidCents int64           `json:"totalPaidCents,omitempty"`
 	Items          []ExtractedItem `json:"items"`
 }
 
