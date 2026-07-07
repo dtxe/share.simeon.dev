@@ -57,10 +57,12 @@ func NewRouter(s *Server) http.Handler {
 		api.With(s.rateLimitOTPVerify).Post("/auth/otp/verify", s.handleOTPVerify)
 		api.Post("/auth/logout", s.handleLogout)
 
-		api.Post("/auth/passkey/register/options", s.handlePasskeyRegisterOptions)
-		api.Post("/auth/passkey/register/verify", s.handlePasskeyRegisterVerify)
-		api.Post("/auth/passkey/login/options", s.handlePasskeyLoginOptions)
-		api.Post("/auth/passkey/login/verify", s.handlePasskeyLoginVerify)
+		if s.Cfg.PasskeyAccountsEnabled {
+			api.Post("/auth/passkey/register/options", s.handlePasskeyRegisterOptions)
+			api.Post("/auth/passkey/register/verify", s.handlePasskeyRegisterVerify)
+			api.Post("/auth/passkey/login/options", s.handlePasskeyLoginOptions)
+			api.Post("/auth/passkey/login/verify", s.handlePasskeyLoginVerify)
+		}
 
 		api.Post("/sessions", s.handleCreateSession)
 		api.Get("/me/bills", s.handleListMyBills)

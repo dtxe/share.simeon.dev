@@ -8,9 +8,10 @@ import (
 )
 
 type meResponse struct {
-	Email      *string `json:"email"`
-	HasEmail   bool `json:"hasEmail"`
-	HasPasskey bool `json:"hasPasskey"`
+	Email           *string `json:"email"`
+	HasEmail        bool    `json:"hasEmail"`
+	HasPasskey      bool    `json:"hasPasskey"`
+	PasskeysEnabled bool    `json:"passkeysEnabled"`
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -37,5 +38,10 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(meResponse{Email: email, HasEmail: email != nil, HasPasskey: hasPasskey})
+	_ = json.NewEncoder(w).Encode(meResponse{
+		Email:           email,
+		HasEmail:        email != nil,
+		HasPasskey:      hasPasskey,
+		PasskeysEnabled: s.Cfg.PasskeyAccountsEnabled,
+	})
 }
