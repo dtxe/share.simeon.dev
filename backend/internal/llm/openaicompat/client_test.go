@@ -161,6 +161,11 @@ func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
 			if gotMinimizePrompt != tt.wantMinimizePrompt {
 				t.Fatalf("minimize-thinking prompt present = %v, want %v", gotMinimizePrompt, tt.wantMinimizePrompt)
 			}
+			// Collapse whitespace so the assertion is robust to source line-wrapping.
+			normalizedPrompt := strings.Join(strings.Fields(gotBody.Messages[0].Content[0].Text), " ")
+			if !strings.Contains(normalizedPrompt, "verify that the sum of each item's priceCents times its quantity equals subtotalCents") {
+				t.Fatalf("expected prompt to instruct the model to reconcile items against subtotalCents, got: %q", gotBody.Messages[0].Content[0].Text)
+			}
 		})
 	}
 }

@@ -21,11 +21,16 @@ import (
 
 const extractionPrompt = `You are extracting structured data from a photo of a restaurant receipt.
 Return the restaurant name, the date (ISO 8601, best effort), and every line item with its name,
-price in integer cents, and quantity. Also return, in integer cents: the pre-tax subtotal
-(subtotalCents), any tip/gratuity amount (tipCents), and the final total actually charged including
-tax and tip (totalPaidCents) — prefer a credit-card/charged-amount line for totalPaidCents when one
-is printed. Only include amounts clearly printed on the receipt; if a field can't be determined,
-omit it rather than guessing wildly.
+unit price in integer cents (priceCents is the price for a single item, not the line total), and
+quantity. Also return, in integer cents: the pre-tax subtotal (subtotalCents), any tip/gratuity
+amount (tipCents), and the final total actually charged including tax and tip (totalPaidCents) —
+prefer a credit-card/charged-amount line for totalPaidCents when one is printed. Only include
+amounts clearly printed on the receipt; if a field can't be determined, omit it rather than guessing
+wildly.
+Where a pre-tax subtotal is printed, verify that the sum of each item's priceCents times its
+quantity equals subtotalCents. If they don't match, re-read the item lines and the subtotal line and
+correct whichever was misread — the most common error is recording the line total (unit price times
+quantity) as priceCents instead of the per-item unit price.
 Call the extract_receipt function with the result — do not respond in plain text.`
 
 const minimizeReasoningPromptSuffix = `Minimize thinking: use only the reasoning needed to read the receipt, then call the extract_receipt function directly.`
@@ -130,7 +135,7 @@ var extractionSchema = map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"name":       map[string]any{"type": "string"},
-					"priceCents": map[string]any{"type": "integer"},
+					"priceCents": map[string]any{"type": "integer", "description": "per-item unit price in cents, not the line total"},
 					"quantity":   map[string]any{"type": "number"},
 				},
 				"required": []string{"name", "priceCents", "quantity"},
