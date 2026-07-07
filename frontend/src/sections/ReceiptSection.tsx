@@ -1,21 +1,11 @@
 import { useRef, useState } from 'react'
 import { Loader2, Sparkles, Trash2 } from 'lucide-react'
-import { ApiError, type Dish } from '../lib/api'
+import { type Dish } from '../lib/api'
 import { formatCents } from '../lib/split'
-import { toUploadableImage } from '../lib/image'
 import { Button } from '../components/ui/Button'
 import { ReceiptImage } from '../components/ReceiptImage'
 
-type Stage = 'idle' | 'uploading' | 'parsing' | 'done' | 'failed'
-
-interface ExtractResult {
-  restaurantName?: string
-  date?: string
-  subtotalCents?: number
-  tipCents?: number
-  totalPaidCents?: number
-  items: { name: string; priceCents: number; quantity: number }[]
-}
+export type ReceiptStage = 'idle' | 'uploading' | 'parsing' | 'done' | 'failed'
 
 export function ReceiptSection({
   hasReceipt,
@@ -23,6 +13,8 @@ export function ReceiptSection({
   subtotalCents,
   dishes,
   hasPortions,
+  stage,
+  error,
   onUpload,
   onExtract,
   onAddDish,
@@ -34,58 +26,22 @@ export function ReceiptSection({
   subtotalCents: number
   dishes: Dish[]
   hasPortions: boolean
-  onUpload: (file: File | Blob) => Promise<void>
-  onExtract: () => Promise<ExtractResult>
+  stage: ReceiptStage
+  error: string | null
+  onUpload: (file: File) => Promise<void>
+  onExtract: () => Promise<void>
   onAddDish: (dish: { name: string; unitPriceCents: number; quantity: number }) => Promise<void>
   onUpdateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; quantity: number }>) => Promise<void>
   onDeleteDish: (dishId: string) => Promise<void>
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [stage, setStage] = useState<Stage>('idle')
-  const [error, setError] = useState<string | null>(null)
   const [confirmRescan, setConfirmRescan] = useState(false)
-
-  async function runExtract() {
-    setStage('parsing')
-    setError(null)
-    try {
-      const result = await onExtract()
-      setStage('done')
-      if (result.items.length === 0) {
-        setError('No items detected — add them below.')
-      }
-    } catch (err) {
-      setStage('failed')
-      if (err instanceof ApiError && err.status === 429) {
-        setError('Scan limit reached for this bill — add items below.')
-      } else if (err instanceof ApiError && err.status === 503) {
-        setError("Scanning isn't available right now — add items below.")
-      } else {
-        setError("Couldn't read the receipt — add items below.")
-      }
-    }
-  }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    setStage('uploading')
-    setError(null)
-    const uploadable = await toUploadableImage(file)
-    if (!uploadable) {
-      setStage('failed')
-      setError('Could not read this photo. Try a JPEG or PNG instead.')
-      return
-    }
-    try {
-      await onUpload(uploadable)
-    } catch {
-      setStage('failed')
-      setError('Upload failed. Try again.')
-      return
-    }
-    await runExtract()
+    await onUpload(file)
   }
 
   function handleRescanClick() {
@@ -93,7 +49,7 @@ export function ReceiptSection({
       setConfirmRescan(true)
       return
     }
-    void runExtract()
+    void onExtract()
   }
 
   return (
@@ -129,7 +85,7 @@ export function ReceiptSection({
                     size="sm"
                     onClick={() => {
                       setConfirmRescan(false)
-                      void runExtract()
+                      void onExtract()
                     }}
                   >
                     Re-scan

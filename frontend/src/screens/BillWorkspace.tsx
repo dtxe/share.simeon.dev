@@ -5,13 +5,14 @@ import { AppHeader } from '../components/AppHeader'
 import { NotAuthorized } from '../components/NotAuthorized'
 import { Section } from '../components/ui/Section'
 import { Button } from '../components/ui/Button'
-import { ReceiptSection } from '../sections/ReceiptSection'
+import { ReceiptSection, type ReceiptStage } from '../sections/ReceiptSection'
 import { PeopleSection } from '../sections/PeopleSection'
 import { TotalPaidSection } from '../sections/TotalPaidSection'
 import { AssignSection } from '../sections/AssignSection'
 import { useEnsureSession } from '../hooks/useEnsureSession'
-import { api, isAuthError, type Person, type Dish, type Portion, type SessionDetail } from '../lib/api'
+import { ApiError, api, isAuthError, type Person, type Dish, type Portion, type SessionDetail } from '../lib/api'
 import { unassignedDishIds, formatCents } from '../lib/split'
+import { toUploadableImage } from '../lib/image'
 
 const EMPTY_PEOPLE: Person[] = []
 const EMPTY_DISHES: Dish[] = []
@@ -19,6 +20,18 @@ const EMPTY_PORTIONS: Portion[] = []
 
 type SectionId = 'receipt' | 'people' | 'total' | 'assign'
 const SECTION_ORDER: SectionId[] = ['receipt', 'people', 'total', 'assign']
+type ReceiptFlow = { stage: ReceiptStage; error: string | null }
+const IDLE_RECEIPT_FLOW: ReceiptFlow = { stage: 'idle', error: null }
+
+function extractErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 429) {
+    return 'Scan limit reached for this bill — add items below.'
+  }
+  if (err instanceof ApiError && err.status === 503) {
+    return "Scanning isn't available right now — add items below."
+  }
+  return "Couldn't read the receipt — add items below."
+}
 
 export default function BillWorkspace() {
   const { id: routeId } = useParams<{ id?: string }>()
@@ -36,9 +49,21 @@ export default function BillWorkspace() {
   const people = data?.people ?? EMPTY_PEOPLE
   const dishes = data?.dishes ?? EMPTY_DISHES
   const portions = data?.portions ?? EMPTY_PORTIONS
+  const receiptFlowKeyId = routeId ?? 'new'
+
+  const { data: receiptFlow = IDLE_RECEIPT_FLOW } = useQuery<ReceiptFlow>({
+    queryKey: ['receiptFlow', receiptFlowKeyId],
+    queryFn: () => Promise.resolve(IDLE_RECEIPT_FLOW),
+    staleTime: Infinity,
+    gcTime: 5 * 60 * 1000,
+  })
 
   function invalidate(id: string) {
     qc.invalidateQueries({ queryKey: ['session', id] })
+  }
+
+  function setReceiptFlow(id: string, flow: ReceiptFlow) {
+    qc.setQueryData(['receiptFlow', id], flow)
   }
 
   // --- section open/collapse orchestration ---
@@ -109,10 +134,33 @@ export default function BillWorkspace() {
   }
 
   // --- mutations ---
-  const uploadReceipt = async (file: File | Blob) => {
-    const id = await ensure()
-    await api.uploadReceipt(id, file)
-    invalidate(id)
+  const uploadReceipt = async (file: File) => {
+    const currentKey = routeId ?? 'new'
+    let id: string | null = null
+    let phase: 'upload' | 'extract' = 'upload'
+
+    setReceiptFlow(currentKey, { stage: 'uploading', error: null })
+    try {
+      const uploadable = await toUploadableImage(file)
+      if (!uploadable) {
+        setReceiptFlow(currentKey, { stage: 'failed', error: 'Could not read this photo. Try a JPEG or PNG instead.' })
+        return
+      }
+
+      id = await ensure()
+      setReceiptFlow(id, { stage: 'uploading', error: null })
+
+      await api.uploadReceipt(id, uploadable)
+      invalidate(id)
+
+      phase = 'extract'
+      setReceiptFlow(id, { stage: 'parsing', error: null })
+      const result = await api.extract(id)
+      invalidate(id)
+      setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null })
+    } catch (err) {
+      setReceiptFlow(id ?? currentKey, { stage: 'failed', error: phase === 'upload' ? 'Upload failed. Try again.' : extractErrorMessage(err) })
+    }
   }
 
   const runExtract = async () => {
@@ -121,9 +169,14 @@ export default function BillWorkspace() {
     // navigation lands, and ensure()'s inflight-promise cache still resolves
     // to the right id regardless of which render's closure calls it.
     const id = await ensure()
-    const result = await api.extract(id)
-    invalidate(id)
-    return result
+    setReceiptFlow(id, { stage: 'parsing', error: null })
+    try {
+      const result = await api.extract(id)
+      invalidate(id)
+      setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null })
+    } catch (err) {
+      setReceiptFlow(id, { stage: 'failed', error: extractErrorMessage(err) })
+    }
   }
 
   const addDish = async (dish: { name: string; unitPriceCents: number; quantity: number }) => {
@@ -235,6 +288,8 @@ export default function BillWorkspace() {
           subtotalCents={session?.subtotalCents ?? 0}
           dishes={dishes}
           hasPortions={portions.some((p) => p.shares > 0)}
+          stage={receiptFlow.stage}
+          error={receiptFlow.error}
           onUpload={uploadReceipt}
           onExtract={runExtract}
           onAddDish={addDish}
