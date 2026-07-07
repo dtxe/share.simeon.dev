@@ -1,5 +1,5 @@
 // Package fireworks is the default receipt-extraction provider: Fireworks
-// AI's OpenAI-wire-compatible chat completions endpoint, hosting Kimi K2.7.
+// AI's OpenAI-wire-compatible chat completions endpoint, hosting MiniMax M3.
 package fireworks
 
 import (

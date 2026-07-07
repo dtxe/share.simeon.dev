@@ -55,16 +55,35 @@ type Config struct {
 	SMTPFrom      string
 	SMTPTLSMode   string
 
-	LLMProvider             string
-	LLMBaseURL              string
-	LLMModel                string
-	LLMAPIKey               string
-	LLMCostPer1KTokensCents float64
-	LLMDailySpendCapCents   int
+	LLMProvider                   string
+	LLMBaseURL                    string
+	LLMModel                      string
+	LLMAPIKey                     string
+	LLMInputCostPer1KTokensCents  float64
+	LLMOutputCostPer1KTokensCents float64
+	LLMDailySpendCapCents         int
 
 	UploadDir string
 
 	Debug bool
+}
+
+type LLMPricing struct {
+	InputCostPer1KTokensCents  float64
+	OutputCostPer1KTokensCents float64
+}
+
+const defaultLLMModel = "accounts/fireworks/models/minimax-m3"
+
+var supportedLLMModelPricing = map[string]LLMPricing{
+	"accounts/fireworks/models/minimax-m3": {
+		InputCostPer1KTokensCents:  0.03,
+		OutputCostPer1KTokensCents: 0.12,
+	},
+	"accounts/fireworks/models/kimi-k2p7-code": {
+		InputCostPer1KTokensCents:  0.095,
+		OutputCostPer1KTokensCents: 0.4,
+	},
 }
 
 // Load reads configuration from the environment. Any FOO env var may instead
@@ -114,12 +133,11 @@ func Load() (*Config, error) {
 		SMTPFrom:      getEnv("SMTP_FROM", ""),
 		SMTPTLSMode:   getEnv("SMTP_TLS_MODE", "starttls"),
 
-		LLMProvider:             getEnv("LLM_PROVIDER", "fireworks"),
-		LLMBaseURL:              getEnv("LLM_BASE_URL", "https://api.fireworks.ai/inference/v1"),
-		LLMModel:                getEnv("LLM_MODEL", "accounts/fireworks/models/kimi-k2p7-code"),
-		LLMAPIKey:               getEnv("LLM_API_KEY", ""),
-		LLMCostPer1KTokensCents: getFloat("LLM_COST_PER_1K_TOKENS_CENTS", 0.2),
-		LLMDailySpendCapCents:   getInt("LLM_DAILY_SPEND_CAP_CENTS", 100),
+		LLMProvider:           getEnv("LLM_PROVIDER", "fireworks"),
+		LLMBaseURL:            getEnv("LLM_BASE_URL", "https://api.fireworks.ai/inference/v1"),
+		LLMModel:              getEnv("LLM_MODEL", defaultLLMModel),
+		LLMAPIKey:             getEnv("LLM_API_KEY", ""),
+		LLMDailySpendCapCents: getInt("LLM_DAILY_SPEND_CAP_CENTS", 100),
 
 		UploadDir: getEnv("UPLOAD_DIR", "/data/uploads"),
 
@@ -138,6 +156,22 @@ func Load() (*Config, error) {
 	}
 	if cfg.AnonIdentityTransport != "cookie" && cfg.AnonIdentityTransport != "header" {
 		return nil, fmt.Errorf("ANON_IDENTITY_TRANSPORT must be 'cookie' or 'header', got %q", cfg.AnonIdentityTransport)
+	}
+	inputCost, inputCostSet := getOptionalFloat("LLM_INPUT_COST_PER_1K_TOKENS_CENTS")
+	outputCost, outputCostSet := getOptionalFloat("LLM_OUTPUT_COST_PER_1K_TOKENS_CENTS")
+	if inputCostSet != outputCostSet {
+		return nil, fmt.Errorf("LLM_INPUT_COST_PER_1K_TOKENS_CENTS and LLM_OUTPUT_COST_PER_1K_TOKENS_CENTS must be set together")
+	}
+	if inputCostSet {
+		cfg.LLMInputCostPer1KTokensCents = inputCost
+		cfg.LLMOutputCostPer1KTokensCents = outputCost
+	} else {
+		pricing, ok := supportedLLMModelPricing[cfg.LLMModel]
+		if !ok {
+			return nil, fmt.Errorf("LLM_MODEL %q has no built-in pricing; set LLM_INPUT_COST_PER_1K_TOKENS_CENTS and LLM_OUTPUT_COST_PER_1K_TOKENS_CENTS", cfg.LLMModel)
+		}
+		cfg.LLMInputCostPer1KTokensCents = pricing.InputCostPer1KTokensCents
+		cfg.LLMOutputCostPer1KTokensCents = pricing.OutputCostPer1KTokensCents
 	}
 	if cfg.EmailOTPEnabled {
 		if cfg.OTPHashPepper == "" {
@@ -203,14 +237,14 @@ func getInt(key string, def int) int {
 	return n
 }
 
-func getFloat(key string, def float64) float64 {
+func getOptionalFloat(key string) (float64, bool) {
 	v := getEnv(key, "")
 	if v == "" {
-		return def
+		return 0, false
 	}
 	f, err := strconv.ParseFloat(v, 64)
 	if err != nil {
 		log.Fatalf("config: %s: invalid float %q: %v", key, v, err)
 	}
-	return f
+	return f, true
 }

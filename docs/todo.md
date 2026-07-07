@@ -61,7 +61,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 
 ## 7. LLM provider (receipt extraction)
 - [x] `internal/llm` — `Provider` interface + shared `openaicompat` wire-format client
-- [x] `internal/llm/fireworks` — default impl (Kimi K2.7, json_schema response format)
+- [x] `internal/llm/fireworks` — default impl (MiniMax M3, forced function-call response shape)
 - [x] `internal/llm/openai` — sibling impl proving swappability (both are ~15-line wrappers around `openaicompat.Client`)
 - [x] Unit tests against a mocked HTTP server (request shape, auth header, response parsing, non-200 handling, unknown-field rejection) — all passing
 - [x] Manual curl smoke test against a real receipt photo — completed with the live Fireworks key from docker secrets; extraction returned structured JSON for a real receipt image

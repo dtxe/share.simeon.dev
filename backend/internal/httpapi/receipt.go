@@ -170,7 +170,7 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 			log.Printf("debug: extract session=%s provider=%s: %v", sessionID, s.LLM.Name(), extractErr)
 		}
 	} else {
-		actualCents := estimateCostCents(result.Usage, s.Cfg.LLMCostPer1KTokensCents)
+		actualCents := estimateCostCents(result.Usage, s.Cfg.LLMInputCostPer1KTokensCents, s.Cfg.LLMOutputCostPer1KTokensCents)
 		_ = s.RL.AdjustLLMSpend(ctx, actualCents-estimatedCents)
 		rawResponse, _ = json.Marshal(result.Receipt)
 	}
@@ -245,10 +245,11 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, result.Receipt)
 }
 
-func estimateCostCents(usage llm.Usage, costPer1KTokensCents float64) int {
-	total := usage.PromptTokens + usage.CompletionTokens
+func estimateCostCents(usage llm.Usage, inputCostPer1KTokensCents, outputCostPer1KTokensCents float64) int {
+	cost := float64(usage.PromptTokens)/1000.0*inputCostPer1KTokensCents +
+		float64(usage.CompletionTokens)/1000.0*outputCostPer1KTokensCents
 	// Round rather than truncate — floor-ing every call systematically
 	// underreports spend against the daily cap, letting real spend drift
 	// past it over many calls.
-	return int(math.Round(float64(total) / 1000.0 * costPer1KTokensCents))
+	return int(math.Round(cost))
 }

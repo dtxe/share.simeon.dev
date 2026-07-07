@@ -1,5 +1,5 @@
 // Package llm abstracts receipt extraction behind a small provider
-// interface. Fireworks (hosting Kimi K2.7) is the default, but its API is
+// interface. Fireworks (hosting MiniMax M3) is the default, but its API is
 // OpenAI-wire-compatible, so swapping providers/models is an env var change
 // (LLM_PROVIDER, LLM_BASE_URL, LLM_MODEL, LLM_API_KEY), not a code change.
 package llm

@@ -27,7 +27,9 @@ Went through several rounds of direction before landing here — earlier sketche
 
 ## LLM integration
 - **Provider interface** (`internal/llm.Provider`), not a hardcoded Fireworks call — `fireworks/` is the default impl, `openai/` is a sibling proving swappability (Fireworks' endpoint is OpenAI-wire-compatible, so this costs little).
-- Default model: `accounts/fireworks/models/kimi-k2p7-code` via Fireworks' `chat/completions`, image sent as base64 `image_url` content part, `response_format: json_schema` requested for reliable structured extraction (restaurant name, date, items) instead of prompt+regex parsing.
+- Default model: `accounts/fireworks/models/minimax-m3` via Fireworks' `chat/completions`, image sent as base64 `image_url` content part, and a forced `extract_receipt` tool call used for reliable structured extraction (restaurant name, date, totals, items) instead of prompt+regex parsing. `accounts/fireworks/models/kimi-k2p7-code` remains a supported Fireworks model option.
+- LLM pricing is split by input/output tokens. Supported-model pricing is built into config for MiniMax M3 (`0.03` input / `0.12` output cents per 1K tokens) and Kimi K2.7 Code (`0.095` input / `0.4` output cents per 1K tokens); custom models must set both split cost env vars explicitly.
+- Reasoning config is model-specific: Kimi K2.7 Code gets Fireworks' `reasoning_effort: "low"`; MiniMax M3 does not get `reasoning_effort` or `thinking` because Fireworks documents M3's `thinking: {"type":"adaptive"}` as the default rather than a low-thinking setting, so the prompt explicitly asks it to minimize thinking and call the extraction tool directly.
 - **Cost controls are load-bearing, not decorative**: a global Redis-backed daily spend cap (`LLM_DAILY_SPEND_CAP_CENTS`, default $1/day) checked *before* every call, plus per-IP and per-session extraction caps. This exists because receipt extraction is the one endpoint that costs real money per call and has no natural rate limit otherwise.
 - Same modularity pattern applied to **email delivery** (`internal/email.Provider`, SMTP default) — swap providers via env vars only.
 

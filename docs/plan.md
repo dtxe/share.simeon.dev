@@ -12,7 +12,7 @@
 
 ## Context
 
-Empty repo (`/srv/cher-app`, no git yet). Building from scratch: mobile-first web app to split restaurant bills between friends. User provides receipt (photo or manual entry) + people, assigns portions per dish, app computes weighted split, produces a public read-only share link with the breakdown + receipt image. Uses Kimi K2.7 on Fireworks AI for receipt OCR/extraction, but the LLM provider must stay swappable (interface-based, not hardcoded).
+Empty repo (`/srv/cher-app`, no git yet). Building from scratch: mobile-first web app to split restaurant bills between friends. User provides receipt (photo or manual entry) + people, assigns portions per dish, app computes weighted split, produces a public read-only share link with the breakdown + receipt image. Uses Fireworks AI for receipt OCR/extraction, but the LLM provider must stay swappable (interface-based, not hardcoded).
 
 Three design passes ran in parallel up front: overall architecture, frontend UI/UX (delegated to Fable), backend security (delegated to Fable). Identity/auth then went through several rounds of user direction, each one delegated back to the same Fable security agent for a decisive design rather than a menu of options. **Final answer, superseding all earlier identity sketches in this process:** every user starts fully anonymous and the app works completely without ever authenticating (create, assign, share); email and passkeys are optional, never-mandatory upgrades purely for cross-device recall of bill history.
 
@@ -224,7 +224,7 @@ type Provider interface {
     Name() string
 }
 ```
-Config: `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`/`LLM_API_KEY_FILE`. Default impl calls Fireworks' OpenAI-compatible `chat/completions` with model `accounts/fireworks/models/kimi-k2p7-code`, image as base64 `image_url` content part, `response_format: json_schema` for reliable structured output. OpenAI-wire-compatible, so an `openai/` sibling package proves swappability.
+Config: `LLM_PROVIDER`, `LLM_BASE_URL`, `LLM_MODEL`, `LLM_API_KEY`/`LLM_API_KEY_FILE`. Default impl calls Fireworks' OpenAI-compatible `chat/completions` with model `accounts/fireworks/models/minimax-m3`, image as base64 `image_url` content part, and a forced tool call for reliable structured output. OpenAI-wire-compatible, so an `openai/` sibling package proves swappability.
 
 **Email provider abstraction** (`internal/email`), same modularity pattern:
 ```go
@@ -238,7 +238,7 @@ Default: SMTP — works against any real provider's relay (SES/Postmark/Sendgrid
 
 **Abuse / cost controls (Redis-backed):**
 - `internal/ratelimit`: fixed-window counters (`INCR`+`EXPIRE`) per IP — global `60 req/min/IP`, `10/hour/IP` on `POST /api/sessions`, `5/hour/IP` on `POST /api/sessions/:id/extract`, `10/hour/IP` on `POST /api/auth/otp/request` (plus the Postgres-tracked per-email cooldown/attempt caps above), `30/min/IP` on invalid `/api/view/*` lookups.
-- **Global LLM spend cap**: `LLM_DAILY_SPEND_CAP_CENTS=100` ($1/day) via Redis key `llm:spend:{utc-date}`, incremented by estimated cost from Fireworks' returned token `usage` × `LLM_COST_PER_1K_TOKENS_CENTS`, ~25h TTL for daily self-reset. Checked *before* calling the provider; 503 once it would be exceeded.
+- **Global LLM spend cap**: `LLM_DAILY_SPEND_CAP_CENTS=100` ($1/day) via Redis key `llm:spend:{utc-date}`, incremented by estimated cost from Fireworks' returned token `usage` × split input/output per-token pricing (`LLM_INPUT_COST_PER_1K_TOKENS_CENTS`, `LLM_OUTPUT_COST_PER_1K_TOKENS_CENTS`, or the built-in supported-model table), ~25h TTL for daily self-reset. Checked *before* calling the provider; 503 once it would be exceeded.
 - Per-session `extract_count` cap (max 5, race-safe conditional `UPDATE`) as a belt-and-suspenders limit if Redis is ever unavailable.
 - 60s upstream timeout, bounded `max_tokens`, LLM output parsed with `DisallowUnknownFields`, extracted values re-validated through the same bounds as manual input.
 
