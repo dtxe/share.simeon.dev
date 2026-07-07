@@ -83,28 +83,29 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
   - note: LLM-extracted JSON originally used snake_case keys since that mirrored the schema handed to the model; reconciled to camelCase (both the Go struct tags and the JSON schema sent to the model) while starting frontend integration, so the whole API is consistently camelCase now
 
 ## 10. Frontend scaffold
-- [x] Vite + React (TS) + Tailwind v4 (`@tailwindcss/vite`) + wouter + lucide-react + zustand + `@tanstack/react-query` + vaul
-  - simplified from the original plan's "minimal shadcn subset": hand-wrote Button/Input-equivalent styling directly with Tailwind instead of pulling in shadcn's Radix Button/Input/Badge/Tabs primitives — the actual components needed (PersonChip, DishRow, PeopleRail) are custom anyway, so the subset would have added little; kept `vaul` for the drawer since that's genuinely fiddly to hand-roll (focus trap, drag-to-dismiss)
+- [x] Vite + React (TS) + Tailwind v4 (`@tailwindcss/vite`) + wouter + lucide-react + `@tanstack/react-query` + vaul
+  - simplified from the original plan's "minimal shadcn subset": no shadcn catalog was installed. The app uses Tailwind plus small local primitives (`Button`, `Section`, `SegmentedControl`, `Stepper`, `Avatar`) and keeps `vaul` only for bottom drawers (`ProfileDrawer`, `ShareLinkDrawer`) since accessible bottom sheets are fiddly to hand-roll.
 - [x] `lib/api.ts` — typed fetch wrapper (`credentials:'include'`) covering every backend endpoint
 - [x] `lib/split.ts` — local preview math mirroring backend cents/largest-remainder formula, reconciled against the server before anything is shown as final
-- [x] `index.css` design tokens (color, people palette) — no separate `state/bill.ts` reducer/localStorage layer, since the backend now persists everything from session creation onward (superseded by the identity-model rework; React Query against the live API replaced the originally-planned local-first reducer)
-- [x] `auth/useMe.ts` + `SaveHistoryBanner` (inline email OTP request/verify UI, plus passkey register/login CTA)
-- [x] Welcome screen (3 BigActionCards + "Your bills" history + SaveHistoryBanner) — verified in a real mobile-viewport browser
-- [x] People screen — verified live: add/remove chips, round-robin colors, Next gating on 2+ people
-- [x] Items screen (manual entry + receipt review share the same editable list; extract button appears once a receipt exists)
+- [x] `index.css` design tokens (warm paper background, white cards, green accent, fixed people palette, JetBrains Mono receipt typography) — no separate `state/bill.ts` reducer/localStorage layer, since the backend is the store of record and React Query replaced the originally-planned local-first reducer
+- [x] `auth/useMe.ts`, `useAuthActions.ts`, and `ProfileDrawer` (email OTP request/verify, passkey register/login, logout) reachable from the app header
+- [x] `AppHeader` + `/history` — bill history is a separate lightweight route; anonymous users are nudged to add email/passkey from the profile/history flow, not a welcome-screen banner
+- [x] Latest redesign shipped: `/` and `/bill/:id` both render the single `BillWorkspace`; legacy step URLs redirect into it (`/people`, `/items`, `/assign` → `/bill/:id`; `/results` → `/bill/:id/settle`)
 
-## 11. Assign screen (focus + rail)
-- [x] DishRow list, sticky PeopleRail, PersonChip — all built and verified live
-- [x] Selection state machine (`state/assignSelection.ts`, zustand) — dish-mode and person-mode both verified interactively in-browser (tap dish → rail becomes assign chips; tap person while idle → dish rows grow inline steppers)
-- [x] ShareStepper (inline +/- in person-mode), "Split evenly" pill
+## 11. Bill workspace + settle flow
+- [x] `BillWorkspace` accordion sections: receipt/items, people, total paid, assignment. Completion state auto-opens the first incomplete section and collapses completed sections unless the user manually toggled them.
+- [x] Receipt/items section: upload/manual entry share one editable list; upload immediately runs extraction; re-scan warns before replacing items when portions exist.
+- [x] Extraction loading motion: spinner next to "Reading your receipt…" plus shimmer placeholder rows while the LLM parses and no dishes have landed yet.
+- [x] People section: bulk paste one name per line, inline rename/delete, confirmation before deleting a person with existing portions.
+- [x] Total paid section: inline input (not a drawer), subtotal default action, receipt-derived value hint, and tax/tip delta caption.
+- [x] Assignment section: segmented **By item** / **By person** modes over one shared shares map. By item expands a dish to per-person steppers and a "Split evenly" action; by person expands a person to per-dish steppers.
 - [x] Exit gate warning on unassigned dishes (offers to split remainder evenly)
-- [x] Total paid drawer (reachable from Assign + Results) — live-verified the save/prefill round trip
-- [x] Results screen (PersonResultCard accordion, Share link CTA) — live-verified
+- [x] `Settle` screen (`/bill/:id/settle`): title editing, receipt-style subtotal/tax-tip/total summary, `PersonBreakdownCard` accordions, receipt thumbnail, fixed Edit/Create share actions, and `ShareLinkDrawer`.
 
 ## 12. Receipt + share end-to-end
-- [x] Items screen wired to `POST /sessions/:id/extract`; graceful failure path tested live (no API key configured)
-- [x] SharedView (`/s/:token`) — chrome-free, live-verified in a **separate cookie-less browser session** (confirmed zero cookies sent, correct names/amounts rendered, no owner/session id or edit capability exposed)
-- [x] Share link creation — live-verified end to end (Results → Share link → copy → open in fresh session → correct public breakdown)
+- [x] Receipt/items section wired to `POST /sessions/:id/extract`; graceful failure path tested live (no API key configured)
+- [x] SharedView (`/s/:token`) — chrome-free, live-verified in a **separate cookie-less browser session** (confirmed zero cookies sent, correct names/amounts rendered, no owner/session id or edit capability exposed); now mirrors the settle presentation with person breakdown cards when public dish detail is available
+- [x] Share link creation — live-verified end to end (Settle → Share link → copy → open in fresh session → correct public breakdown)
 
 ### Bugs found via live browser testing (all fixed)
 - **Nil-slice → `null` JSON crash**: several `internal/store` list functions and `split.Compute`'s `UnassignedDishIDs` used `var out []T`, which Go serializes as JSON `null` (not `[]`) when empty. The frontend's `.map()` over an empty dish/people list crashed the whole app on a brand-new bill. Fixed by initializing every list-returning function with `T{}` instead of `var`.
@@ -116,6 +117,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 ## 13. Prod hardening
 - [x] **Caddy** same-origin proxy prod build (correction from the original plan, which assumed nginx — your call). Swapped `docker/frontend.Dockerfile`'s prod stage to `caddy:2-alpine`, replaced `docker/nginx.conf` with `docker/Caddyfile`. Built and ran both prod images standalone against the compose network: homepage 200, `/api/*` correctly proxied to the real backend (not just serving the SPA shell), client-side routes (`/bill/:id/assign`) correctly fall back to `index.html`. Prod JS bundle: 328.64 kB / **101.06 kB gzipped** — under the plan's 120KB budget.
   - **bug found + fixed**: first Caddyfile attempt used bare `try_files {path} /index.html` + `file_server` alongside a `@api`-matched `reverse_proxy` — but Caddy's default *directive* order runs `try_files` before `reverse_proxy` regardless of the order they're written in the file, so `/api/*` requests were being silently rewritten to `/index.html` before `reverse_proxy` ever got a chance to match them (confirmed live: `curl .../api/me` returned the SPA's HTML, not JSON). Fixed by wrapping both in explicit `handle` blocks, which are mutually exclusive and evaluated in file order — see `docs/agent_lessons.md`.
+  - **font/CSP follow-up fixed**: the redesign uses Google-hosted JetBrains Mono, so prod CSP now permits `https://fonts.googleapis.com` in `style-src` and `https://fonts.gstatic.com` in `font-src`; without both, prod would silently fall back even though dev worked.
   - **process note**: `docker compose build <service>` retags the shared `<project>-<service>:latest` image (`share-<service>` as of the Cher→Share rename) regardless of which target you build, so testing the prod target this way temporarily overwrites the tag the running dev container was built from. Restored both by rebuilding through `docker compose up -d --build` (which uses the dev override again) immediately after the prod-image tests.
 - [x] distroless/non-root backend prod image — built and run standalone against the compose network, confirmed `/healthz` → 200
 - [x] docker secrets wiring — `docker-compose.yml` now has a top-level `secrets:` block (`postgres_password`, `llm_api_key`, `smtp_pass`, files under gitignored `./secrets/`), mounted into both `postgres` (native `POSTGRES_PASSWORD_FILE`) and `backend`. Since compose can't assemble `DATABASE_URL` from a secret file itself, `internal/config` grew `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD[_FILE]`/`DB_NAME` fields and builds the DSN from parts when `DATABASE_URL` isn't set directly. Verified live: `docker compose up -d --build backend postgres redis`, backend connected via the secret-derived DSN, `/healthz` → `ok`, `/api/me` → real JSON. See `docs/agent_lessons.md` for the "don't set both `POSTGRES_PASSWORD` and `POSTGRES_PASSWORD_FILE`" gotcha.
@@ -125,6 +127,6 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `docker compose up` full flow, zero login: create bill → receipt → extract → assign → breakdown → share link → incognito view — done live via curl (backend) and a real browser (frontend, agent-browser at 390×844); extract confirmed to fail gracefully (no `FIREWORKS_API_KEY` configured) rather than crash
 - [x] Second anon identity gets 404 on someone else's bill, not leakage — verified via curl (backend) and confirmed the public share view never exposes owner/session id regardless
 - [x] `ANON_ACCOUNTS_ENABLED=false` → every route 401s without session — verified, then reverted
-- [x] Assign screen manually tested on narrow mobile viewport emulation — verified live in-browser at 390×844 (agent-browser), both dish-mode and person-mode interactions
+- [x] Bill workspace manually tested on narrow mobile viewport emulation — verified live in-browser at 390×844 (agent-browser), including both assignment modes
 
 Only remaining item anywhere in this file: full WebAuthn browser round-trip with a real authenticator. Live Fireworks extraction against a real photo is now verified against the live stack.

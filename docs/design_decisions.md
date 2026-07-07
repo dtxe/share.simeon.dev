@@ -10,7 +10,7 @@ Running log of decisions that aren't obvious from the code. Full original plan: 
 
 ## Stack
 - **Go + chi** backend, **Postgres** (pgx/v5) durable store, **Redis** for ephemeral counters only (rate limits, LLM daily spend cap) — never identity data.
-- **Vite + React**, Tailwind v4 + a *minimal* shadcn/ui subset (Button, Input, Drawer/vaul, Badge, Tabs) — not the full catalog, to keep bundle small. `wouter` for routing over react-router (app only has ~6 routes).
+- **Vite + React**, Tailwind v4, custom app-specific primitives (`Button`, `Section`, `SegmentedControl`, `Stepper`, `Avatar`) plus `vaul` only for bottom drawers. No shadcn/ui catalog was installed; the shipped UI is bespoke and small. `wouter` for routing over react-router (app only has a handful of routes).
 - **mise** pins Go/Node versions and defines dev tasks; docker compose is still the actual runtime.
 - Go pinned to **1.25** (bumped up from an initial 1.22 pin once it became clear current chi/pgx/migrate/go-redis/go-webauthn releases all require 1.24+). Backend dev hot reload via `air@latest`. Backend's dev-only host port is `8081` (not `8080`) to avoid clashing with the frontend prod nginx image's `8080:80` mapping when compose merges base + override files.
 - **docker compose** services: postgres, redis, backend, frontend. OTP email always uses a configured real SMTP relay; no local SMTP catcher is part of the stack.
@@ -39,7 +39,7 @@ Went through several rounds of direction before landing here — earlier sketche
 - Server-generated filenames only (`{uuid}.jpg`) — no client-controlled byte ever touches a filesystem path.
 
 ## Split calculation
-- Backend (`internal/split`) is the single source of truth, integer cents throughout, largest-remainder rounding so per-person amounts always sum exactly to the entered total paid. Frontend has a mirrored formula (`lib/split.ts`) but only for instant local preview — the Results screen always reconciles against the backend before showing a number as final.
+- Backend (`internal/split`) is the single source of truth, integer cents throughout, largest-remainder rounding so per-person amounts always sum exactly to the entered total paid. Frontend has a mirrored formula (`lib/split.ts`) but only for instant local preview — the Settle screen always reconciles against the backend before showing a number as final.
 - Dishes with zero assigned shares are surfaced as "unassigned" warnings, never silently dropped from the math.
 - Money columns in Postgres are `BIGINT` cents (`unit_price_cents`, `total_paid_cents`, `subtotal_cents`), not `NUMERIC(10,2)` as an earlier architecture-pass sketch had it — matches "integer cents throughout" exactly and sidesteps numeric/float rounding entirely, at the cost of the DB values not being human-readable as currency without dividing by 100.
 
@@ -50,9 +50,22 @@ Went through several rounds of direction before landing here — earlier sketche
 - Header-transport identity mode (`ANON_IDENTITY_TRANSPORT=header`) returns the new session token via an `X-Anon-Session-Token` response header (CORS-exposed) rather than a JSON body field — keeps the `Identify` middleware fully generic across every handler instead of coupling it to specific response shapes.
 
 ## Frontend: thin client over the live API, not a local-first reducer
-The original plan sketch (from before the identity model was finalized) assumed a client-side-first architecture: a big local reducer + localStorage, touching the backend only a few times (extract, share). That's superseded — since every anonymous visitor already gets a real, persisted `bill_sessions` row from the moment they pick an action on Welcome, there's no reason to also maintain a parallel local copy of the same state. The frontend is now a straightforward React Query client against the live API: every screen reads/writes through `lib/api.ts`, and `lib/split.ts`'s local math is used only for the Assign screen's instant per-tap preview, never as a store of record. This is simpler to reason about and means refresh/back-button "just work" for free (the server, not localStorage, is what survives a reload).
+The original plan sketch (from before the identity model was finalized) assumed a client-side-first architecture: a big local reducer + localStorage, touching the backend only a few times (extract, share). That's superseded — since every anonymous visitor already gets a real, persisted `bill_sessions` row as soon as the bill needs server state, there's no reason to also maintain a parallel local copy of the same state. The frontend is now a straightforward React Query client against the live API: every screen reads/writes through `lib/api.ts`, and `lib/split.ts`'s local math is used only for instant assignment preview, never as a store of record. This is simpler to reason about and means refresh/back-button "just work" for free (the server, not localStorage, is what survives a reload).
 
-Also simplified from plan: skipped installing shadcn/ui's actual component set (Button/Input/Badge/Tabs) — the screens that mattered (Assign's DishRow/PersonChip/PeopleRail) are fully custom anyway, so a generic Button primitive would have added a dependency without saving real work. Kept `vaul` for the two drawers (Total Paid, Share Link) since a proper accessible bottom sheet is genuinely fiddly to hand-roll.
+## Frontend redesign: single bill workspace
+The latest UI redesign supersedes the original multi-step mobile wizard (`/people`, `/items`, `/assign`, `/results`) and the earlier "focus + rail" assign screen. The shipped owner flow is now:
 
-## Assign screen: "focus + rail," not literal two columns
-User's original mental model was a literal two-column screen (dishes | people). Design review (delegated to Fable) flagged that true side-by-side columns don't fit a phone viewport legibly (~170px each). Presented three concrete alternatives; user picked **focus + rail**: full-width scrollable dish list, sticky bottom people rail. Tapping a dish turns the rail into assign-controls for that dish; tapping a person (with nothing selected) grows inline steppers on every dish row for that person. Same underlying shares map either direction, one shared selection/adjustment action — preserves the two-way interaction the user wanted without the cramped layout.
+- `/` and `/bill/:id` render the same `BillWorkspace`, a single narrow mobile canvas with collapsible sections for receipt/items, people, total paid, and assignment. Legacy step URLs redirect into this workspace so old links don't strand users.
+- Section completion drives progressive disclosure: the first incomplete section opens automatically, completed sections collapse, and manual user toggles are respected.
+- Receipt upload and manual item entry share the same editable item list. Upload immediately runs extraction; while the LLM is parsing, the UI shows a spinner plus shimmer rows so a multi-second model call doesn't look frozen.
+- People entry favors bulk paste (`one name per line`) plus inline rename/delete instead of one-chip-at-a-time choreography.
+- Assignment is now a compact two-mode segmented control: **By item** expands one dish to per-person steppers and a "Split evenly" action; **By person** expands one person to per-dish steppers. This keeps the same underlying shares map and two-way editing without a persistent bottom people rail.
+- Total paid is inline in the workspace, not a drawer. It defaults from extracted/entered subtotal when useful, shows the tax/tip delta inline, and stays editable before settlement.
+- `/bill/:id/settle` is the results screen: title editing, subtotal/tax-tip/total receipt summary, person breakdown accordions, optional receipt thumbnail, fixed edit/share actions, and the `ShareLinkDrawer` for copy/native-share.
+- `/history` is a separate lightweight bill list. Account/history recovery lives in `ProfileDrawer` from the header, not in a welcome-screen banner.
+- `/s/:token` remains chrome-free and read-only, but now mirrors the settle presentation with pre-expanded/expandable person cards when public dish detail is available.
+
+## Frontend visual language
+The shipped redesign uses a restrained receipt-led system rather than generic app chrome: warm paper background (`#faf9f7`), white paper cards, dashed dividers, green accent, and JetBrains Mono as the global typeface. `.font-receipt` is still applied explicitly to money, counts, URLs, and receipt-like summaries so numeric UI gets tabular figures even if the global font changes later.
+
+The production Caddy CSP must allow the Google Fonts stylesheet and font files (`style-src ... https://fonts.googleapis.com`; `font-src ... https://fonts.gstatic.com`) or this visual decision silently degrades in prod.

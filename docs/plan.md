@@ -6,9 +6,11 @@
 > - Migrations live at `backend/internal/db/migrations/` (not top-level `backend/migrations/`) — `go:embed` can't reference parent directories.
 > - Frontend has no `state/bill.ts` local reducer/localStorage layer — superseded once the identity model settled on real persisted sessions from the first user action; the frontend is a thin React Query client over the live API instead (see design_decisions.md).
 > - The bearer edit-token idea from the first design pass never shipped — ownership is session+`owner_user_id`, exactly as the "Reconciliation" note below already anticipated.
-> - Frontend skipped shadcn's actual component set (Button/Input/Badge/Tabs); kept only `vaul` for the two drawers.
+> - Frontend skipped shadcn's actual component set (Button/Input/Badge/Tabs); the shipped app uses small local primitives and keeps `vaul` only for bottom drawers.
 > - API is consistently camelCase, including LLM-extracted JSON (this plan's `internal/llm` sketch predates that reconciliation).
 > - Go pinned to 1.25, not 1.22 (see `docs/agent_lessons.md`).
+> - The latest UI redesign superseded the multi-route wizard below: `/` and `/bill/:id` now render one accordion-style `BillWorkspace`; legacy step routes redirect there, and `/bill/:id/settle` is the results/share screen. See `docs/design_decisions.md` and `docs/todo.md` for the current frontend shape.
+> - The production Caddy CSP allows Google Fonts (`fonts.googleapis.com` / `fonts.gstatic.com`) because the redesigned UI uses JetBrains Mono receipt typography.
 
 ## Context
 
