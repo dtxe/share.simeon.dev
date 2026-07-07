@@ -1,12 +1,16 @@
 @import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,100..800;1,100..800&display=swap');
 
 :root {
   --color-bg: #faf9f7;
+  --color-paper: #ffffff;
   --color-ink: #1c1b1a;
+  --color-ink-soft: #6f6a63;
   --color-border: #e7e4df;
   --color-accent: #0f9d6e;
   --color-accent-tint: #0f9d6e1a;
   --color-warn: #b45309;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", "Courier New", monospace;
 
   /* fixed, round-robin people palette — used for avatars/dots only, never
      for semantic meaning (identity is always also shown via initials) */
@@ -45,5 +49,10 @@ button {
 }
 
 .tabular-nums {
+  font-variant-numeric: tabular-nums;
+}
+
+.font-receipt {
+  font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }

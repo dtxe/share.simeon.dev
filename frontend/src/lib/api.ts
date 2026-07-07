@@ -146,6 +146,10 @@ export const api = {
     sessionId: string,
     dishes: { name: string; unitPriceCents: number; quantity: number; source?: string }[],
   ) => request<Dish[]>(`/sessions/${enc(sessionId)}/dishes/bulk`, { method: 'POST', body: JSON.stringify({ dishes }) }),
+  addDish: (sessionId: string, dish: { name: string; unitPriceCents: number; quantity: number }) =>
+    request<Dish>(`/sessions/${enc(sessionId)}/dishes`, { method: 'POST', body: JSON.stringify(dish) }),
+  updateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; quantity: number }>) =>
+    request<void>(`/dishes/${enc(dishId)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteDish: (dishId: string) => request<void>(`/dishes/${enc(dishId)}`, { method: 'DELETE' }),
 
   upsertPortion: (dishId: string, personId: string, shares: number) =>
@@ -170,12 +174,17 @@ export const api = {
   requestOtp: (email: string) => request<void>('/auth/otp/request', { method: 'POST', body: JSON.stringify({ email }) }),
   verifyOtp: (email: string, code: string) =>
     request<void>('/auth/otp/verify', { method: 'POST', body: JSON.stringify({ email, code }) }),
+  logout: () => request<void>('/auth/logout', { method: 'POST' }),
 
   extract: (sessionId: string) =>
-    request<{ restaurantName?: string; date?: string; items: { name: string; priceCents: number; quantity: number }[] }>(
-      `/sessions/${enc(sessionId)}/extract`,
-      { method: 'POST' },
-    ),
+    request<{
+      restaurantName?: string
+      date?: string
+      subtotalCents?: number
+      tipCents?: number
+      totalPaidCents?: number
+      items: { name: string; priceCents: number; quantity: number }[]
+    }>(`/sessions/${enc(sessionId)}/extract`, { method: 'POST' }),
 
   createShare: (sessionId: string) =>
     request<{ viewToken: string; shareUrl: string }>(`/sessions/${enc(sessionId)}/share`, { method: 'POST' }),
@@ -189,6 +198,8 @@ export const api = {
       totalPaidCents: number | null
       hasReceipt: boolean
       people: { id: string; name: string; sortOrder: number }[]
+      dishes?: { id: string; name: string; unitPriceCents: number; quantity: number }[]
+      portions?: { dishId: string; personId: string; shares: number }[]
       result: BreakdownResult
     }>(`/view/${enc(token)}`),
   publicReceiptUrl: (token: string) => `/api/view/${enc(token)}/receipt`,
