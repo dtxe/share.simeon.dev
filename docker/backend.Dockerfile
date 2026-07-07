@@ -13,9 +13,11 @@ CMD ["air", "-c", ".air.toml"]
 FROM base AS build
 COPY backend/ .
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/server ./cmd/server
+RUN mkdir -p /out/data/uploads && chown -R 65532:65532 /out/data
 
 FROM gcr.io/distroless/static-debian12@sha256:9c346e4be81b5ca7ff31a0d89eaeade58b0f95cfd3baed1f36083ddb47ca3160 AS prod
 COPY --from=build /out/server /server
+COPY --from=build --chown=65532:65532 /out/data /data
 USER nonroot:nonroot
 EXPOSE 8080
 ENTRYPOINT ["/server"]
