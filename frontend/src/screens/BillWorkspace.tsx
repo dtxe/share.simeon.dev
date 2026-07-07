@@ -10,7 +10,7 @@ import { PeopleSection } from '../sections/PeopleSection'
 import { TotalPaidSection } from '../sections/TotalPaidSection'
 import { AssignSection } from '../sections/AssignSection'
 import { useEnsureSession } from '../hooks/useEnsureSession'
-import { api, isAuthError, ApiError, type Person, type Dish, type Portion, type SessionDetail } from '../lib/api'
+import { api, isAuthError, type Person, type Dish, type Portion, type SessionDetail } from '../lib/api'
 import { unassignedDishIds, formatCents } from '../lib/split'
 
 const EMPTY_PEOPLE: Person[] = []
@@ -116,8 +116,11 @@ export default function BillWorkspace() {
   }
 
   const runExtract = async () => {
-    const id = routeId
-    if (!id) throw new ApiError(400, 'no session')
+    // Use ensure() (not routeId directly) — this can be invoked by a stale
+    // closure captured before the very first upload's session-creating
+    // navigation lands, and ensure()'s inflight-promise cache still resolves
+    // to the right id regardless of which render's closure calls it.
+    const id = await ensure()
     const result = await api.extract(id)
     invalidate(id)
     return result

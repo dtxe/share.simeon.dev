@@ -7,8 +7,8 @@ import SharedView from './screens/SharedView'
 export default function App() {
   return (
     <Switch>
-      <Route path="/" component={BillWorkspace} />
-      <Route path="/bill/:id" component={BillWorkspace} />
+      <Route path="/">{() => <BillWorkspace key="new" />}</Route>
+      <Route path="/bill/:id">{(p) => <BillWorkspace key={p.id} />}</Route>
       <Route path="/bill/:id/settle" component={SettleScreen} />
       <Route path="/history" component={HistoryScreen} />
       <Route path="/s/:token" component={SharedView} />
