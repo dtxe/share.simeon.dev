@@ -94,7 +94,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 
 ## 11. Bill workspace + settle flow
 - [x] `BillWorkspace` accordion sections: receipt/items, people, total paid, assignment. Completion state auto-opens the first incomplete section and collapses completed sections unless the user manually toggled them.
-- [x] Receipt/items section: upload/manual entry share one editable list; upload immediately runs extraction; re-scan warns before replacing items when portions exist.
+- [x] Receipt/items section: upload/manual entry share one editable list; upload immediately runs extraction; re-upload (which replaces the image and re-runs extraction) warns before replacing items when portions exist; a failed LLM parse forces a fresh photo re-upload rather than re-scanning the same image, except 429/503 (extract cap / daily budget) where re-upload can't help.
 - [x] Extraction loading motion: spinner next to "Reading your receipt…" plus shimmer placeholder rows while the LLM parses and no dishes have landed yet.
 - [x] People section: bulk paste one name per line, inline rename/delete, confirmation before deleting a person with existing portions.
 - [x] Total paid section: inline input (not a drawer), subtotal default action, receipt-derived value hint, and tax/tip delta caption.

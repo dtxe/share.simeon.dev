@@ -20,8 +20,8 @@ const EMPTY_PORTIONS: Portion[] = []
 
 type SectionId = 'receipt' | 'people' | 'total' | 'assign'
 const SECTION_ORDER: SectionId[] = ['receipt', 'people', 'total', 'assign']
-type ReceiptFlow = { stage: ReceiptStage; error: string | null }
-const IDLE_RECEIPT_FLOW: ReceiptFlow = { stage: 'idle', error: null }
+type ReceiptFlow = { stage: ReceiptStage; error: string | null; retryable: boolean }
+const IDLE_RECEIPT_FLOW: ReceiptFlow = { stage: 'idle', error: null, retryable: false }
 
 function extractErrorMessage(err: unknown): string {
   if (err instanceof ApiError && err.status === 429) {
@@ -36,6 +36,10 @@ function extractErrorMessage(err: unknown): string {
 function uploadErrorMessage(err: unknown): string {
   if (err instanceof ApiError && err.message) return err.message
   return 'Upload failed. Try again.'
+}
+
+function isExtractRefused(err: unknown): boolean {
+  return err instanceof ApiError && (err.status === 429 || err.status === 503)
 }
 
 export default function BillWorkspace() {
@@ -144,46 +148,30 @@ export default function BillWorkspace() {
     let id: string | null = null
     let phase: 'upload' | 'extract' = 'upload'
 
-    setReceiptFlow(currentKey, { stage: 'uploading', error: null })
+    setReceiptFlow(currentKey, { stage: 'uploading', error: null, retryable: false })
     try {
       const uploadable = await toUploadableImage(file)
       if (!uploadable) {
-        setReceiptFlow(currentKey, { stage: 'failed', error: 'Could not read this photo. Try a JPEG or PNG instead.' })
+        setReceiptFlow(currentKey, { stage: 'failed', error: 'Could not read this photo. Try a JPEG or PNG instead.', retryable: true })
         return
       }
 
       console.log('[receipt] uploadable ready', { inputType: file.type, inputSize: file.size, inputName: file.name, outputType: uploadable.type, outputSize: uploadable.size })
 
       id = await ensure()
-      setReceiptFlow(id, { stage: 'uploading', error: null })
+      setReceiptFlow(id, { stage: 'uploading', error: null, retryable: false })
 
       await api.uploadReceipt(id, uploadable)
       invalidate(id)
 
       phase = 'extract'
-      setReceiptFlow(id, { stage: 'parsing', error: null })
+      setReceiptFlow(id, { stage: 'parsing', error: null, retryable: false })
       const result = await api.extract(id)
       invalidate(id)
-      setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null })
+      setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null, retryable: false })
     } catch (err) {
       console.error('[receipt] upload failed', { phase, inputType: file.type, inputSize: file.size, inputName: file.name, error: err })
-      setReceiptFlow(id ?? currentKey, { stage: 'failed', error: phase === 'upload' ? uploadErrorMessage(err) : extractErrorMessage(err) })
-    }
-  }
-
-  const runExtract = async () => {
-    // Use ensure() (not routeId directly) — this can be invoked by a stale
-    // closure captured before the very first upload's session-creating
-    // navigation lands, and ensure()'s inflight-promise cache still resolves
-    // to the right id regardless of which render's closure calls it.
-    const id = await ensure()
-    setReceiptFlow(id, { stage: 'parsing', error: null })
-    try {
-      const result = await api.extract(id)
-      invalidate(id)
-      setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null })
-    } catch (err) {
-      setReceiptFlow(id, { stage: 'failed', error: extractErrorMessage(err) })
+      setReceiptFlow(id ?? currentKey, { stage: 'failed', error: phase === 'upload' ? uploadErrorMessage(err) : extractErrorMessage(err), retryable: phase === 'extract' ? !isExtractRefused(err) : true })
     }
   }
 
@@ -298,8 +286,8 @@ export default function BillWorkspace() {
           hasPortions={portions.some((p) => p.shares > 0)}
           stage={receiptFlow.stage}
           error={receiptFlow.error}
+          retryable={receiptFlow.retryable}
           onUpload={uploadReceipt}
-          onExtract={runExtract}
           onAddDish={addDish}
           onUpdateDish={updateDish}
           onDeleteDish={deleteDish}

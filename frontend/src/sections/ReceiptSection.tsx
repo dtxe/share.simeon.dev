@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Loader2, Sparkles, Trash2 } from 'lucide-react'
+import { Loader2, Trash2, Upload } from 'lucide-react'
 import { type Dish } from '../lib/api'
 import { formatCents } from '../lib/split'
 import { Button } from '../components/ui/Button'
@@ -15,8 +15,8 @@ export function ReceiptSection({
   hasPortions,
   stage,
   error,
+  retryable,
   onUpload,
-  onExtract,
   onAddDish,
   onUpdateDish,
   onDeleteDish,
@@ -28,28 +28,29 @@ export function ReceiptSection({
   hasPortions: boolean
   stage: ReceiptStage
   error: string | null
+  retryable: boolean
   onUpload: (file: File) => Promise<void>
-  onExtract: () => Promise<void>
   onAddDish: (dish: { name: string; unitPriceCents: number; quantity: number }) => Promise<void>
   onUpdateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; quantity: number }>) => Promise<void>
   onDeleteDish: (dishId: string) => Promise<void>
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
-  const [confirmRescan, setConfirmRescan] = useState(false)
+  const [confirmReupload, setConfirmReupload] = useState(false)
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
+    setConfirmReupload(false)
     await onUpload(file)
   }
 
-  function handleRescanClick() {
+  function handleReuploadClick() {
     if (hasPortions) {
-      setConfirmRescan(true)
+      setConfirmReupload(true)
       return
     }
-    void onExtract()
+    fileInputRef.current?.click()
   }
 
   return (
@@ -72,37 +73,37 @@ export function ReceiptSection({
         <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white p-3">
           {receiptUrl && <ReceiptImage src={receiptUrl} size={64} />}
           <div className="flex flex-1 flex-col gap-1">
-            {stage === 'parsing' ? (
+            {stage === 'uploading' || stage === 'parsing' ? (
               <span className="flex items-center gap-1.5 text-sm text-neutral-500">
                 <Loader2 size={14} className="animate-spin" />
-                Reading your receipt…
+                {stage === 'uploading' ? 'Uploading…' : 'Reading your receipt…'}
               </span>
-            ) : confirmRescan ? (
+            ) : confirmReupload ? (
               <div className="flex flex-col gap-2 text-sm">
-                <span>Re-scanning replaces all items and clears the split.</span>
+                <span>Re-uploading replaces all items and clears the split.</span>
                 <div className="flex gap-2">
                   <Button
                     size="sm"
                     onClick={() => {
-                      setConfirmRescan(false)
-                      void onExtract()
+                      setConfirmReupload(false)
+                      fileInputRef.current?.click()
                     }}
                   >
-                    Re-scan
+                    Re-upload
                   </Button>
-                  <Button size="sm" variant="secondary" onClick={() => setConfirmRescan(false)}>
+                  <Button size="sm" variant="secondary" onClick={() => setConfirmReupload(false)}>
                     Cancel
                   </Button>
                 </div>
               </div>
-            ) : (
+            ) : stage === 'failed' && !retryable ? null : (
               <button
                 type="button"
-                onClick={handleRescanClick}
+                onClick={handleReuploadClick}
                 className="flex items-center gap-1.5 self-start text-sm font-medium text-[var(--color-accent)]"
               >
-                <Sparkles size={16} />
-                Re-scan receipt
+                <Upload size={16} />
+                Re-upload photo
               </button>
             )}
           </div>
