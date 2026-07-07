@@ -42,5 +42,9 @@ export function unassignedDishIds(dishes: Dish[], portions: Portion[]): string[]
 }
 
 export function formatCents(cents: number): string {
-  return (cents / 100).toLocaleString(undefined, { style: 'currency', currency: 'USD' })
+  return (cents / 100).toLocaleString(undefined, {
+    style: 'currency',
+    currency: 'USD',
+    currencyDisplay: 'narrowSymbol',
+  })
 }
