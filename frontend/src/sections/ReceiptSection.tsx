@@ -54,7 +54,7 @@ export function ReceiptSection({
 
   return (
     <div className="flex flex-col gap-3">
-      <input ref={fileInputRef} type="file" accept="image/*" capture="environment" className="hidden" onChange={handleFile} />
+      <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
 
       {!hasReceipt && (
         <button
