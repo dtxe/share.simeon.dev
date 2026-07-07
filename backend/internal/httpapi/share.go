@@ -72,7 +72,6 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 			"id":             d.ID,
 			"name":           d.Name,
 			"unitPriceCents": d.UnitPriceCents,
-			"quantity":       d.Quantity,
 		})
 	}
 

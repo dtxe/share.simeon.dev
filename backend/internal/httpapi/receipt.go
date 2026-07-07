@@ -8,6 +8,7 @@ import (
 	"math"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -196,10 +197,17 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		if name == "" {
 			continue
 		}
+		qty := math.Round(it.Quantity*100) / 100
+		if qty <= 0 {
+			qty = 1
+		}
+		if qty != 1 {
+			name = formatQtyPrefix(qty) + name
+		}
+		lineTotal := int64(math.Round(float64(it.PriceCents) * qty))
 		newDishes = append(newDishes, store.NewDish{
 			Name:           name,
-			UnitPriceCents: it.PriceCents,
-			Quantity:       it.Quantity,
+			UnitPriceCents: lineTotal,
 			Source:         "llm_extracted",
 		})
 	}
@@ -252,4 +260,9 @@ func estimateCostCents(usage llm.Usage, inputCostPer1KTokensCents, outputCostPer
 	// underreports spend against the daily cap, letting real spend drift
 	// past it over many calls.
 	return int(math.Round(cost))
+}
+
+// formatQtyPrefix formats a quantity as a compact name prefix, e.g. "2x " or "0.5x ".
+func formatQtyPrefix(qty float64) string {
+	return strconv.FormatFloat(qty, 'f', -1, 64) + "x "
 }

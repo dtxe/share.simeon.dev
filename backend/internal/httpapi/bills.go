@@ -236,10 +236,9 @@ func (s *Server) handleRenamePerson(w http.ResponseWriter, r *http.Request) {
 }
 
 type dishInput struct {
-	Name           string  `json:"name"`
-	UnitPriceCents int64   `json:"unitPriceCents"`
-	Quantity       float64 `json:"quantity"`
-	Source         string  `json:"source"`
+	Name           string `json:"name"`
+	UnitPriceCents int64  `json:"unitPriceCents"`
+	Source         string `json:"source"`
 }
 
 type replaceDishesBody struct {
@@ -274,14 +273,9 @@ func (s *Server) handleReplaceDishes(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "unitPriceCents out of range")
 			return
 		}
-		if d.Quantity <= 0 {
-			writeJSONError(w, http.StatusBadRequest, "quantity must be positive")
-			return
-		}
 		newDishes = append(newDishes, store.NewDish{
 			Name:           d.Name,
 			UnitPriceCents: d.UnitPriceCents,
-			Quantity:       d.Quantity,
 			Source:         d.Source,
 		})
 	}
@@ -319,15 +313,9 @@ func (s *Server) handleAddDish(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "unitPriceCents out of range")
 		return
 	}
-	if body.Quantity <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "quantity must be positive")
-		return
-	}
-
 	dish, err := s.Store.AddDish(r.Context(), sessionID, userID, store.NewDish{
 		Name:           body.Name,
 		UnitPriceCents: body.UnitPriceCents,
-		Quantity:       body.Quantity,
 		Source:         "manual",
 	})
 	if err != nil {
@@ -350,9 +338,8 @@ func (s *Server) handleDeleteDish(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateDishBody struct {
-	Name           *string  `json:"name"`
-	UnitPriceCents *int64   `json:"unitPriceCents"`
-	Quantity       *float64 `json:"quantity"`
+	Name           *string `json:"name"`
+	UnitPriceCents *int64  `json:"unitPriceCents"`
 }
 
 func (s *Server) handleUpdateDish(w http.ResponseWriter, r *http.Request) {
@@ -375,11 +362,7 @@ func (s *Server) handleUpdateDish(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "dish name must be 1-100 characters")
 		return
 	}
-	if body.Quantity != nil && *body.Quantity <= 0 {
-		writeJSONError(w, http.StatusBadRequest, "quantity must be positive")
-		return
-	}
-	if err := s.Store.UpdateDish(r.Context(), chi.URLParam(r, "dishId"), userID, body.Name, body.UnitPriceCents, body.Quantity); err != nil {
+	if err := s.Store.UpdateDish(r.Context(), chi.URLParam(r, "dishId"), userID, body.Name, body.UnitPriceCents); err != nil {
 		storeErrToStatus(w, err)
 		return
 	}

@@ -56,7 +56,7 @@ type Dish struct {
 	SessionID      string  `json:"sessionId"`
 	Name           string  `json:"name"`
 	UnitPriceCents int64   `json:"unitPriceCents"`
-	Quantity       float64 `json:"quantity"`
+	Quantity       float64 `json:"-"`
 	SortOrder      int     `json:"sortOrder"`
 	Source         string  `json:"source"`
 }
@@ -315,7 +315,6 @@ func (s *Store) listPeopleUnchecked(ctx context.Context, sessionID string) ([]Pe
 type NewDish struct {
 	Name           string
 	UnitPriceCents int64
-	Quantity       float64
 	Source         string // "manual" | "llm_extracted"
 }
 
@@ -348,18 +347,18 @@ func (s *Store) ReplaceDishes(ctx context.Context, sessionID, ownerUserID string
 		dish.SessionID = sessionID
 		dish.Name = d.Name
 		dish.UnitPriceCents = d.UnitPriceCents
-		dish.Quantity = d.Quantity
+		dish.Quantity = 1
 		dish.Source = source
 		dish.SortOrder = i
 		err := tx.QueryRow(ctx, `
 			INSERT INTO dishes (session_id, name, unit_price_cents, quantity, sort_order, source)
-			VALUES ($1, $2, $3, $4, $5, $6)
+			VALUES ($1, $2, $3, 1, $4, $5)
 			RETURNING id::text
-		`, sessionID, d.Name, d.UnitPriceCents, d.Quantity, i, source).Scan(&dish.ID)
+		`, sessionID, d.Name, d.UnitPriceCents, i, source).Scan(&dish.ID)
 		if err != nil {
 			return nil, err
 		}
-		subtotal += int64(float64(d.UnitPriceCents) * d.Quantity)
+		subtotal += d.UnitPriceCents
 		out = append(out, dish)
 	}
 
@@ -418,13 +417,13 @@ func (s *Store) AddDish(ctx context.Context, sessionID, ownerUserID string, d Ne
 	dish.SessionID = sessionID
 	dish.Name = d.Name
 	dish.UnitPriceCents = d.UnitPriceCents
-	dish.Quantity = d.Quantity
+	dish.Quantity = 1
 	dish.Source = source
 	err := s.Pool.QueryRow(ctx, `
 		INSERT INTO dishes (session_id, name, unit_price_cents, quantity, sort_order, source)
-		VALUES ($1, $2, $3, $4, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM dishes WHERE session_id = $1), $5)
+		VALUES ($1, $2, $3, 1, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM dishes WHERE session_id = $1), $4)
 		RETURNING id::text, sort_order
-	`, sessionID, d.Name, d.UnitPriceCents, d.Quantity, source).Scan(&dish.ID, &dish.SortOrder)
+	`, sessionID, d.Name, d.UnitPriceCents, source).Scan(&dish.ID, &dish.SortOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -457,16 +456,15 @@ func (s *Store) UpsertPortion(ctx context.Context, dishID, personID, ownerUserID
 	return nil
 }
 
-func (s *Store) UpdateDish(ctx context.Context, dishID, ownerUserID string, name *string, unitPriceCents *int64, quantity *float64) error {
+func (s *Store) UpdateDish(ctx context.Context, dishID, ownerUserID string, name *string, unitPriceCents *int64) error {
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE dishes SET
 		  name = COALESCE($3, name),
-		  unit_price_cents = COALESCE($4, unit_price_cents),
-		  quantity = COALESCE($5, quantity)
+		  unit_price_cents = COALESCE($4, unit_price_cents)
 		FROM bill_sessions
 		WHERE dishes.session_id = bill_sessions.id
 		  AND dishes.id = $1 AND bill_sessions.owner_user_id = $2
-	`, dishID, ownerUserID, name, unitPriceCents, quantity)
+	`, dishID, ownerUserID, name, unitPriceCents)
 	if err != nil {
 		return err
 	}
