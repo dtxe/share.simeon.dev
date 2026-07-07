@@ -10,9 +10,18 @@ type DecodedImage = {
 }
 
 async function decodeImage(blob: Blob): Promise<DecodedImage> {
+  // createImageBitmap is the fast path, but on iOS Safari it exists yet
+  // can't decode HEIC — it throws rather than falling back. Catch that and
+  // route through <img>.decode() below, which is the only path that reaches
+  // iOS's OS-level native HEIC decoder. Without this fallback the HEIC→canvas
+  // conversion silently returns null on iPhone and the upload fails.
   if ('createImageBitmap' in window) {
-    const bitmap = await createImageBitmap(blob)
-    return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() }
+    try {
+      const bitmap = await createImageBitmap(blob)
+      return { source: bitmap, width: bitmap.width, height: bitmap.height, close: () => bitmap.close() }
+    } catch {
+      // unsupported format for createImageBitmap (e.g. HEIC on iOS); fall through
+    }
   }
 
   const url = URL.createObjectURL(blob)
@@ -73,26 +82,35 @@ async function heicToJpegViaCanvas(file: File): Promise<Blob | null> {
 }
 
 // iOS camera capture defaults to HEIC, which the backend can't decode.
-// `file.type` is often empty for camera-captured HEIC in Safari, so also
-// check the extension.
+// `file.type` is often empty for camera-captured HEIC in Safari, so sniff
+// the ftyp box too — extension alone misses mislabeled library exports.
 // Returns null if the file can't be converted — the server can't decode
 // HEIC either, so there's no point uploading it and getting a 400 back.
+const HEIC_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'mif1', 'mif3', 'msf1', 'heim', 'heis', 'avic', 'avis'])
+
+async function isHeicBlob(file: File): Promise<boolean> {
+  if (file.type === 'image/heic' || file.type === 'image/heif' || /\.hei[cf]$/i.test(file.name)) {
+    return true
+  }
+  if (file.size < 12) return false
+  const header = new TextDecoder().decode(new Uint8Array(await file.slice(0, 12).arrayBuffer()).subarray(4, 12))
+  return header.startsWith('ftyp') && HEIC_BRANDS.has(header.slice(4, 8))
+}
+
 export async function toUploadableImage(file: File): Promise<File | Blob | null> {
-  const isHeic = file.type === 'image/heic' || file.type === 'image/heif' || /\.hei[cf]$/i.test(file.name)
-  if (!isHeic) {
-    return (await toJpegWithinKimiLimits(file, false)) ?? file
-  }
+  if (await isHeicBlob(file)) {
+    const viaCanvas = await heicToJpegViaCanvas(file)
+    if (viaCanvas) return viaCanvas
 
-  const viaCanvas = await heicToJpegViaCanvas(file)
-  if (viaCanvas) return viaCanvas
-
-  try {
-    const heic2any = (await import('heic2any')).default
-    const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
-    const blob = Array.isArray(converted) ? converted[0] : converted
-    return await toJpegWithinKimiLimits(blob, true)
-  } catch (err) {
-    console.error('HEIC conversion failed', err)
-    return null
+    try {
+      const heic2any = (await import('heic2any')).default
+      const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
+      const blob = Array.isArray(converted) ? converted[0] : converted
+      return await toJpegWithinKimiLimits(blob, true)
+    } catch (err) {
+      console.error('HEIC conversion failed', err)
+      return null
+    }
   }
+  return (await toJpegWithinKimiLimits(file, false)) ?? file
 }
