@@ -19,13 +19,11 @@ import (
 	"share/backend/internal/extraction/baseline"
 	"share/backend/internal/extraction/deterministic"
 	"share/backend/internal/extraction/feedback"
-	"share/backend/internal/extraction/ocrfirst"
 	"share/backend/internal/httpapi"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
 	"share/backend/internal/llm/openai"
 	"share/backend/internal/llm/openaicompat"
-	"share/backend/internal/ocr"
 	"share/backend/internal/ratelimit"
 	"share/backend/internal/receipts"
 	"share/backend/internal/store"
@@ -97,8 +95,7 @@ func main() {
 		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
 		extractor = feedback.New(llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
 	case "ocr_first":
-		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
-		extractor = ocrfirst.New(ocr.New(), llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+		log.Fatalf("EXTRACTION_STRATEGY=ocr_first is experimental and only supported by extractbench (see cmd/extractbench)")
 	default:
 		log.Fatalf("unknown EXTRACTION_STRATEGY %q", cfg.ExtractionStrategy)
 	}

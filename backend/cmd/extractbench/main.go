@@ -49,6 +49,10 @@ func main() {
 	dumpOCRFlag := flag.Bool("dump-ocr", false, "print raw OCR text per file before structuring (ocr_first only)")
 	flag.Parse()
 
+	if *dumpOCRFlag && *strategyFlag != "ocr_first" {
+		log.Fatalf("-dump-ocr is only valid with -strategy=ocr_first (got -strategy=%q)", *strategyFlag)
+	}
+
 	cfg, err := config.Load()
 	if err != nil {
 		log.Fatalf("config: %v", err)
