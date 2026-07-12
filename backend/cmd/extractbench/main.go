@@ -31,10 +31,12 @@ import (
 	"share/backend/internal/extraction/baseline"
 	"share/backend/internal/extraction/deterministic"
 	"share/backend/internal/extraction/feedback"
+	"share/backend/internal/extraction/ocrfirst"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
 	"share/backend/internal/llm/openai"
 	"share/backend/internal/llm/openaicompat"
+	"share/backend/internal/ocr"
 )
 
 type expectedEntry struct {
@@ -42,8 +44,9 @@ type expectedEntry struct {
 }
 
 func main() {
-	strategyFlag := flag.String("strategy", "baseline", "extraction strategy to run (baseline, deterministic_check, feedback_retry)")
+	strategyFlag := flag.String("strategy", "baseline", "extraction strategy to run (baseline, deterministic_check, feedback_retry, ocr_first)")
 	dirFlag := flag.String("dir", "testdata/receipts", "directory of receipt image files to run against")
+	dumpOCRFlag := flag.Bool("dump-ocr", false, "print raw OCR text per file before structuring (ocr_first only)")
 	flag.Parse()
 
 	cfg, err := config.Load()
@@ -61,6 +64,8 @@ func main() {
 		log.Fatalf("unknown LLM_PROVIDER %q", cfg.LLMProvider)
 	}
 
+	ocrEngine := ocr.New()
+
 	var strategy extraction.Strategy
 	switch *strategyFlag {
 	case "baseline":
@@ -71,6 +76,9 @@ func main() {
 	case "feedback_retry":
 		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
 		strategy = feedback.New(llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+	case "ocr_first":
+		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
+		strategy = ocrfirst.New(ocrEngine, llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
 	default:
 		log.Fatalf("unknown -strategy %q", *strategyFlag)
 	}
@@ -100,6 +108,15 @@ func main() {
 			continue
 		}
 		mimeType := http.DetectContentType(image)
+
+		if *dumpOCRFlag {
+			text, err := ocrEngine.Extract(context.Background(), image)
+			if err != nil {
+				fmt.Printf("--- %s: ocr error: %v ---\n", name, err)
+			} else {
+				fmt.Printf("--- %s: raw OCR text ---\n%s\n--- end %s ---\n", name, text, name)
+			}
+		}
 
 		start := time.Now()
 		result, err := strategy.Run(context.Background(), image, mimeType)

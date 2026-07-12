@@ -274,6 +274,23 @@ func buildUserMessage(text string, image []byte, mimeType string) chatMessage {
 	}
 }
 
+func buildTextMessage(text string) chatMessage {
+	return chatMessage{
+		Role:    "user",
+		Content: []contentPart{{Type: "text", Text: text}},
+	}
+}
+
+// ExtractFromText is ExtractWithSchema's text-only counterpart, for
+// strategies that structure already-transcribed text (e.g. ocrfirst's OCR
+// pass) rather than reading an image directly — no image_url content part
+// is sent, everything else about the request/response plumbing is shared
+// via doExtract.
+func (c *Client) ExtractFromText(ctx context.Context, prompt string, schema map[string]any, thinkingBudgetTokens int) (json.RawMessage, llm.Usage, error) {
+	_, raw, usage, err := c.doExtract(ctx, []chatMessage{buildTextMessage(prompt)}, schema, thinkingBudgetTokens)
+	return raw, usage, err
+}
+
 // ExtractWithSchema is the shared request/response plumbing (HTTP call,
 // base64 image part, forced tool-call decode, finish_reason:"length"
 // handling) behind every extraction strategy variant — only the prompt,

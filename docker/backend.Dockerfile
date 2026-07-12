@@ -5,6 +5,7 @@ COPY backend/go.mod backend/go.sum ./
 RUN go mod download
 
 FROM base AS dev
+RUN apk add --no-cache tesseract-ocr tesseract-ocr-data-eng
 RUN go install github.com/air-verse/air@v1.65.3
 COPY backend/ .
 EXPOSE 8080
