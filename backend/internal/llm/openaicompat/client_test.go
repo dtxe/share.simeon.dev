@@ -32,30 +32,18 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 		}
 
 		args := `{"restaurantName":"Thai Basil","date":"2026-07-05","subtotalCents":1200,"tipCents":240,"totalPaidCents":1560,"items":[{"name":"Pad Thai","priceCents":1200,"quantity":1}]}`
-		resp := chatResponse{}
-		resp.Choices = make([]struct {
-			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		}, 1)
-		resp.Choices[0].Message.ToolCalls = make([]struct {
-			Function struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			} `json:"function"`
-		}, 1)
-		resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
-		resp.Choices[0].Message.ToolCalls[0].Function.Arguments = args
-		resp.Choices[0].FinishReason = "stop"
-		resp.Usage.PromptTokens = 500
-		resp.Usage.CompletionTokens = 80
+		resp := chatResponse{
+			Choices: []responseChoice{{
+				Message: responseMessage{
+					ToolCalls: []responseToolCall{{
+						ID:       "call_1",
+						Function: toolCallFunction{Name: extractFunctionName, Arguments: args},
+					}},
+				},
+				FinishReason: "stop",
+			}},
+			Usage: responseUsage{PromptTokens: 500, CompletionTokens: 80},
+		}
 
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(resp)
@@ -188,6 +176,80 @@ func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
 	}
 }
 
+func TestExtractReceiptAttemptReturnsToolCallID(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		writeReceiptResponseWithID(t, w, "call_abc123", `{"items":[]}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-key", "test-model")
+	result, err := c.ExtractReceiptAttempt(context.Background(), []byte("x"), "image/jpeg")
+	if err != nil {
+		t.Fatalf("ExtractReceiptAttempt: %v", err)
+	}
+	if result.ToolCallID != "call_abc123" {
+		t.Errorf("ToolCallID = %q, want %q", result.ToolCallID, "call_abc123")
+	}
+	if string(result.RawArguments) != `{"items":[]}` {
+		t.Errorf("RawArguments = %s, want %s", result.RawArguments, `{"items":[]}`)
+	}
+}
+
+func TestExtractReceiptFeedbackSendsFullHistory(t *testing.T) {
+	var gotBody chatRequest
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+			t.Fatalf("decoding request body: %v", err)
+		}
+		writeReceiptResponseWithID(t, w, "call_2", `{"items":[],"subtotalCents":1200}`)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-key", "test-model")
+	priorArgs := json.RawMessage(`{"items":[{"name":"Pad Thai","priceCents":1200,"quantity":1}],"subtotalCents":1200}`)
+	result, err := c.ExtractReceiptFeedback(context.Background(), []byte("fake-jpeg-bytes"), "image/jpeg", "call_1", priorArgs, "items sum to $24 but subtotal is $12 — re-examine the image")
+	if err != nil {
+		t.Fatalf("ExtractReceiptFeedback: %v", err)
+	}
+	if result.ToolCallID != "call_2" {
+		t.Errorf("ToolCallID = %q, want %q", result.ToolCallID, "call_2")
+	}
+
+	if len(gotBody.Messages) != 4 {
+		t.Fatalf("expected 4 messages (original user, assistant tool call, tool result, feedback user), got %d: %+v", len(gotBody.Messages), gotBody.Messages)
+	}
+
+	original := gotBody.Messages[0]
+	if original.Role != "user" || len(original.Content) != 2 || original.Content[1].ImageURL == nil {
+		t.Fatalf("message 0: expected original user message with text+image, got %+v", original)
+	}
+
+	assistant := gotBody.Messages[1]
+	if assistant.Role != "assistant" {
+		t.Fatalf("message 1: role = %q, want %q", assistant.Role, "assistant")
+	}
+	if len(assistant.ToolCalls) != 1 || assistant.ToolCalls[0].ID != "call_1" || assistant.ToolCalls[0].Function.Arguments != string(priorArgs) {
+		t.Fatalf("message 1: expected replayed tool call with id=call_1 and prior arguments, got %+v", assistant.ToolCalls)
+	}
+
+	toolResult := gotBody.Messages[2]
+	if toolResult.Role != "tool" || toolResult.ToolCallID != "call_1" {
+		t.Fatalf("message 2: expected tool result acking call_1, got %+v", toolResult)
+	}
+
+	feedbackMsg := gotBody.Messages[3]
+	if feedbackMsg.Role != "user" || len(feedbackMsg.Content) != 2 {
+		t.Fatalf("message 3: expected feedback user message with text+image, got %+v", feedbackMsg)
+	}
+	if !strings.Contains(feedbackMsg.Content[0].Text, "re-examine the image") {
+		t.Errorf("message 3: text = %q, want it to contain the feedback text", feedbackMsg.Content[0].Text)
+	}
+	if feedbackMsg.Content[1].ImageURL == nil {
+		t.Fatal("message 3: expected the image to be re-sent on the follow-up turn")
+	}
+}
+
 func TestExtractReceiptUpstreamErrorStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -204,30 +266,7 @@ func TestExtractReceiptUpstreamErrorStatus(t *testing.T) {
 
 func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		resp := chatResponse{}
-		resp.Choices = make([]struct {
-			Message struct {
-				Content   string `json:"content"`
-				ToolCalls []struct {
-					Function struct {
-						Name      string `json:"name"`
-						Arguments string `json:"arguments"`
-					} `json:"function"`
-				} `json:"tool_calls"`
-			} `json:"message"`
-			FinishReason string `json:"finish_reason"`
-		}, 1)
-		resp.Choices[0].Message.ToolCalls = make([]struct {
-			Function struct {
-				Name      string `json:"name"`
-				Arguments string `json:"arguments"`
-			} `json:"function"`
-		}, 1)
-		resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
-		resp.Choices[0].Message.ToolCalls[0].Function.Arguments = `{"items":[],"unexpected_field":"should cause a decode error"}`
-		resp.Choices[0].FinishReason = "stop"
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(resp)
+		writeReceiptResponse(t, w, `{"items":[],"unexpected_field":"should cause a decode error"}`)
 	}))
 	defer srv.Close()
 
@@ -240,29 +279,23 @@ func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 
 func writeReceiptResponse(t *testing.T, w http.ResponseWriter, args string) {
 	t.Helper()
+	writeReceiptResponseWithID(t, w, "call_1", args)
+}
 
-	resp := chatResponse{}
-	resp.Choices = make([]struct {
-		Message struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
-				Function struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	}, 1)
-	resp.Choices[0].Message.ToolCalls = make([]struct {
-		Function struct {
-			Name      string `json:"name"`
-			Arguments string `json:"arguments"`
-		} `json:"function"`
-	}, 1)
-	resp.Choices[0].Message.ToolCalls[0].Function.Name = extractFunctionName
-	resp.Choices[0].Message.ToolCalls[0].Function.Arguments = args
-	resp.Choices[0].FinishReason = "stop"
+func writeReceiptResponseWithID(t *testing.T, w http.ResponseWriter, id, args string) {
+	t.Helper()
+
+	resp := chatResponse{
+		Choices: []responseChoice{{
+			Message: responseMessage{
+				ToolCalls: []responseToolCall{{
+					ID:       id,
+					Function: toolCallFunction{Name: extractFunctionName, Arguments: args},
+				}},
+			},
+			FinishReason: "stop",
+		}},
+	}
 
 	w.Header().Set("Content-Type", "application/json")
 	if err := json.NewEncoder(w).Encode(resp); err != nil {

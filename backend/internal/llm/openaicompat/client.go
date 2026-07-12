@@ -63,8 +63,10 @@ func New(baseURL, apiKey, model string) *Client {
 }
 
 type chatMessage struct {
-	Role    string        `json:"role"`
-	Content []contentPart `json:"content"`
+	Role       string        `json:"role"`
+	Content    []contentPart `json:"content,omitempty"`
+	ToolCalls  []toolCallOut `json:"tool_calls,omitempty"`
+	ToolCallID string        `json:"tool_call_id,omitempty"`
 }
 
 type contentPart struct {
@@ -75,6 +77,21 @@ type contentPart struct {
 
 type imageURL struct {
 	URL string `json:"url"`
+}
+
+// toolCallOut is the assistant-role echo of a prior tool call, sent back as
+// conversation history on a follow-up turn (e.g. feedback.Strategy's second
+// call) — the wire shape a provider expects when replaying its own earlier
+// tool_calls entry.
+type toolCallOut struct {
+	ID       string           `json:"id"`
+	Type     string           `json:"type"`
+	Function toolCallFunction `json:"function"`
+}
+
+type toolCallFunction struct {
+	Name      string `json:"name"`
+	Arguments string `json:"arguments"`
 }
 
 type toolDef struct {
@@ -112,22 +129,28 @@ type chatRequest struct {
 }
 
 type chatResponse struct {
-	Choices []struct {
-		Message struct {
-			Content   string `json:"content"`
-			ToolCalls []struct {
-				Function struct {
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
-				} `json:"function"`
-			} `json:"tool_calls"`
-		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
-	} `json:"choices"`
-	Usage struct {
-		PromptTokens     int `json:"prompt_tokens"`
-		CompletionTokens int `json:"completion_tokens"`
-	} `json:"usage"`
+	Choices []responseChoice `json:"choices"`
+	Usage   responseUsage    `json:"usage"`
+}
+
+type responseChoice struct {
+	Message      responseMessage `json:"message"`
+	FinishReason string          `json:"finish_reason"`
+}
+
+type responseMessage struct {
+	Content   string             `json:"content"`
+	ToolCalls []responseToolCall `json:"tool_calls"`
+}
+
+type responseToolCall struct {
+	ID       string           `json:"id"`
+	Function toolCallFunction `json:"function"`
+}
+
+type responseUsage struct {
+	PromptTokens     int `json:"prompt_tokens"`
+	CompletionTokens int `json:"completion_tokens"`
 }
 
 var extractionSchema = map[string]any{
@@ -155,26 +178,128 @@ var extractionSchema = map[string]any{
 }
 
 func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType string) (*llm.Result, error) {
-	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(image))
-	prompt := extractionPromptForModel(c.Model)
+	raw, usage, err := c.ExtractWithSchema(ctx, image, mimeType, extractionPromptForModel(c.Model), extractionSchema, extractionReasoningBudgetTokens)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := decodeReceipt(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &llm.Result{Receipt: receipt, Usage: usage}, nil
+}
 
-	reqBody := chatRequest{
-		Model: c.Model,
-		Messages: []chatMessage{
-			{
-				Role: "user",
-				Content: []contentPart{
-					{Type: "text", Text: prompt},
-					{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
+// ExtractAttemptResult is one LLM call's outcome, including the tool_call_id
+// a follow-up call needs to replay this attempt as real conversation history
+// (see ExtractReceiptFeedback).
+type ExtractAttemptResult struct {
+	ToolCallID   string
+	Receipt      llm.ExtractedReceipt
+	RawArguments json.RawMessage
+	Usage        llm.Usage
+}
+
+// ExtractReceiptAttempt is ExtractReceipt plus the tool_call_id and raw
+// arguments a strategy needs to set up a feedback retry (feedback.Strategy's
+// first call) — same prompt/schema/budget as ExtractReceipt, so behavior on
+// this first call is identical to the baseline pipeline.
+func (c *Client) ExtractReceiptAttempt(ctx context.Context, image []byte, mimeType string) (*ExtractAttemptResult, error) {
+	messages := []chatMessage{buildUserMessage(extractionPromptForModel(c.Model), image, mimeType)}
+	toolCallID, raw, usage, err := c.doExtract(ctx, messages, extractionSchema, extractionReasoningBudgetTokens)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := decodeReceipt(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &ExtractAttemptResult{ToolCallID: toolCallID, Receipt: receipt, RawArguments: raw, Usage: usage}, nil
+}
+
+// ExtractReceiptFeedback is a second look at the same image: it replays the
+// prior attempt as real conversation history (the original user message, the
+// model's own tool call, an acknowledging tool result) and re-sends the image
+// alongside a new user message describing the discrepancy, then asks the
+// model to call extract_receipt again. Same schema/budget as ExtractReceipt.
+func (c *Client) ExtractReceiptFeedback(ctx context.Context, image []byte, mimeType, priorToolCallID string, priorRawArguments json.RawMessage, feedback string) (*ExtractAttemptResult, error) {
+	messages := []chatMessage{
+		buildUserMessage(extractionPromptForModel(c.Model), image, mimeType),
+		{
+			Role: "assistant",
+			ToolCalls: []toolCallOut{{
+				ID:   priorToolCallID,
+				Type: "function",
+				Function: toolCallFunction{
+					Name:      extractFunctionName,
+					Arguments: string(priorRawArguments),
 				},
-			},
+			}},
 		},
+		{
+			Role:       "tool",
+			ToolCallID: priorToolCallID,
+			Content:    []contentPart{{Type: "text", Text: "received"}},
+		},
+		buildUserMessage(feedback, image, mimeType),
+	}
+	toolCallID, raw, usage, err := c.doExtract(ctx, messages, extractionSchema, extractionReasoningBudgetTokens)
+	if err != nil {
+		return nil, err
+	}
+	receipt, err := decodeReceipt(raw)
+	if err != nil {
+		return nil, err
+	}
+	return &ExtractAttemptResult{ToolCallID: toolCallID, Receipt: receipt, RawArguments: raw, Usage: usage}, nil
+}
+
+func decodeReceipt(raw json.RawMessage) (llm.ExtractedReceipt, error) {
+	var receipt llm.ExtractedReceipt
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&receipt); err != nil {
+		return llm.ExtractedReceipt{}, fmt.Errorf("openaicompat: decoding extracted receipt tool call arguments: %w (raw arguments: %s)", err, raw)
+	}
+	return receipt, nil
+}
+
+func buildUserMessage(text string, image []byte, mimeType string) chatMessage {
+	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(image))
+	return chatMessage{
+		Role: "user",
+		Content: []contentPart{
+			{Type: "text", Text: text},
+			{Type: "image_url", ImageURL: &imageURL{URL: dataURL}},
+		},
+	}
+}
+
+// ExtractWithSchema is the shared request/response plumbing (HTTP call,
+// base64 image part, forced tool-call decode, finish_reason:"length"
+// handling) behind every extraction strategy variant — only the prompt,
+// tool schema, and thinking budget differ between them, and each strategy
+// decodes the returned raw tool-call arguments into its own schema-specific
+// struct. ExtractReceipt is itself just this called with the baseline
+// prompt/schema/budget, decoded into llm.ExtractedReceipt.
+func (c *Client) ExtractWithSchema(ctx context.Context, image []byte, mimeType, prompt string, schema map[string]any, thinkingBudgetTokens int) (json.RawMessage, llm.Usage, error) {
+	_, raw, usage, err := c.doExtract(ctx, []chatMessage{buildUserMessage(prompt, image, mimeType)}, schema, thinkingBudgetTokens)
+	return raw, usage, err
+}
+
+// doExtract is the shared request/response plumbing (HTTP call, forced
+// tool-call decode, finish_reason:"length" handling) behind every extraction
+// call, single- or multi-turn — only the messages, schema, and thinking
+// budget differ between callers.
+func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema map[string]any, thinkingBudgetTokens int) (toolCallID string, args json.RawMessage, usage llm.Usage, err error) {
+	reqBody := chatRequest{
+		Model:    c.Model,
+		Messages: messages,
 		Tools: []toolDef{
 			{
 				Type: "function",
 				Function: functionDef{
 					Name:       extractFunctionName,
-					Parameters: extractionSchema,
+					Parameters: schema,
 				},
 			},
 		},
@@ -182,31 +307,31 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 			Type:     "function",
 			Function: toolChoiceTarget{Name: extractFunctionName},
 		},
-		Thinking:  thinkingConfigForModel(c.Model),
+		Thinking:  thinkingConfigForModel(c.Model, thinkingBudgetTokens),
 		MaxTokens: extractionMaxTokens,
 	}
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: marshal request: %w", err)
+		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: build request: %w", err)
+		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: request failed: %w", err)
+		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: reading response: %w", err)
+		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: reading response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -218,62 +343,81 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 		if len(snippet) > 500 {
 			snippet = snippet[:500]
 		}
-		return nil, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
+		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
 	}
 
 	var chatResp chatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return nil, fmt.Errorf("openaicompat: decoding response envelope: %w", err)
+		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: decoding response envelope: %w", err)
 	}
 	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("openaicompat: no choices in response")
+		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: no choices in response")
+	}
+
+	usage = llm.Usage{
+		PromptTokens:     chatResp.Usage.PromptTokens,
+		CompletionTokens: chatResp.Usage.CompletionTokens,
 	}
 
 	if chatResp.Choices[0].FinishReason == "length" {
 		log.Printf("llm: extraction truncated at max_tokens (model=%s, completion_tokens=%d, reasoning_budget=%d) — tool-call JSON may be incomplete",
-			c.Model, chatResp.Usage.CompletionTokens, extractionReasoningBudgetTokens)
+			c.Model, chatResp.Usage.CompletionTokens, thinkingBudgetTokens)
 	}
 
 	msg := chatResp.Choices[0].Message
 	if len(msg.ToolCalls) == 0 {
-		return nil, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", msg.Content)
+		return "", nil, usage, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", msg.Content)
 	}
 	call := msg.ToolCalls[0]
 	if call.Function.Name != extractFunctionName {
-		return nil, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
+		return "", nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
+	}
+	id := call.ID
+	if id == "" {
+		// Every provider we support sets this, but fall back rather than
+		// leaving a follow-up turn's tool_call_id empty if one doesn't.
+		id = extractFunctionName + "_call"
 	}
 
-	var receipt llm.ExtractedReceipt
-	dec := json.NewDecoder(bytes.NewReader([]byte(call.Function.Arguments)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&receipt); err != nil {
-		return nil, fmt.Errorf("openaicompat: decoding extracted receipt tool call arguments: %w (raw arguments: %s)", err, call.Function.Arguments)
-	}
-
-	return &llm.Result{
-		Receipt: receipt,
-		Usage: llm.Usage{
-			PromptTokens:     chatResp.Usage.PromptTokens,
-			CompletionTokens: chatResp.Usage.CompletionTokens,
-		},
-	}, nil
+	return id, json.RawMessage(call.Function.Arguments), usage, nil
 }
 
 func extractionPromptForModel(model string) string {
-	if thinkingConfigForModel(model) != nil {
+	if SupportsThinking(model) {
 		return extractionPrompt
 	}
 	return extractionPrompt + "\n\n" + minimizeReasoningPromptSuffix
 }
 
-func thinkingConfigForModel(model string) *thinkingConfig {
+// SupportsThinking reports whether model is known to accept the
+// Fireworks/Anthropic-compatible "thinking" request field — live-verified
+// per model, per docs/agent_lessons.md (unverified models risk a 400).
+// Exported so other strategies can decide their own prompt/budget choices
+// consistently with this gate.
+func SupportsThinking(model string) bool {
 	switch model {
 	case kimiK2P7CodeModel, minimaxM3Model:
-		return &thinkingConfig{
-			Type:         "enabled",
-			BudgetTokens: extractionReasoningBudgetTokens,
-		}
+		return true
 	default:
+		return false
+	}
+}
+
+// MinimizeReasoningPromptSuffix is the prompt-level fallback for models that
+// don't support the "thinking" field's hard budget cap.
+const MinimizeReasoningPromptSuffix = minimizeReasoningPromptSuffix
+
+// MinThinkingBudgetTokens is Fireworks' live-verified floor for
+// thinking.budget_tokens (rejects anything lower with a 400) — confirmed
+// against both supported models before this const was added.
+const MinThinkingBudgetTokens = 1024
+
+func thinkingConfigForModel(model string, budgetTokens int) *thinkingConfig {
+	if !SupportsThinking(model) {
 		return nil
+	}
+	return &thinkingConfig{
+		Type:         "enabled",
+		BudgetTokens: budgetTokens,
 	}
 }

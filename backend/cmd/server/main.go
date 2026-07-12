@@ -17,10 +17,12 @@ import (
 	"share/backend/internal/email"
 	"share/backend/internal/extraction"
 	"share/backend/internal/extraction/baseline"
+	"share/backend/internal/extraction/feedback"
 	"share/backend/internal/httpapi"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
 	"share/backend/internal/llm/openai"
+	"share/backend/internal/llm/openaicompat"
 	"share/backend/internal/ratelimit"
 	"share/backend/internal/receipts"
 	"share/backend/internal/store"
@@ -85,6 +87,9 @@ func main() {
 	switch cfg.ExtractionStrategy {
 	case "baseline":
 		extractor = baseline.New(llmProvider, cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+	case "feedback_retry":
+		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
+		extractor = feedback.New(llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
 	default:
 		log.Fatalf("unknown EXTRACTION_STRATEGY %q", cfg.ExtractionStrategy)
 	}
