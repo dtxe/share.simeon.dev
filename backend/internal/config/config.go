@@ -66,6 +66,7 @@ type Config struct {
 	LLMInputCostPer1KTokensCents  float64
 	LLMOutputCostPer1KTokensCents float64
 	LLMDailySpendCapCents         int
+	LLMMaxSpendPerReceiptCents    int
 
 	ExtractionStrategy string
 
@@ -140,11 +141,12 @@ func Load() (*Config, error) {
 		SMTPFrom:      getEnv("SMTP_FROM", ""),
 		SMTPTLSMode:   getEnv("SMTP_TLS_MODE", "starttls"),
 
-		LLMProvider:           getEnv("LLM_PROVIDER", "fireworks"),
-		LLMBaseURL:            getEnv("LLM_BASE_URL", "https://api.fireworks.ai/inference/v1"),
-		LLMModel:              getEnv("LLM_MODEL", defaultLLMModel),
-		LLMAPIKey:             getEnv("LLM_API_KEY", ""),
-		LLMDailySpendCapCents: getInt("LLM_DAILY_SPEND_CAP_CENTS", 100),
+		LLMProvider:                getEnv("LLM_PROVIDER", "fireworks"),
+		LLMBaseURL:                 getEnv("LLM_BASE_URL", "https://api.fireworks.ai/inference/v1"),
+		LLMModel:                   getEnv("LLM_MODEL", defaultLLMModel),
+		LLMAPIKey:                  getEnv("LLM_API_KEY", ""),
+		LLMDailySpendCapCents:      getInt("LLM_DAILY_SPEND_CAP_CENTS", 100),
+		LLMMaxSpendPerReceiptCents: getInt("LLM_MAX_SPEND_PER_RECEIPT_CENTS", 5),
 
 		ExtractionStrategy: getEnv("EXTRACTION_STRATEGY", "baseline"),
 
@@ -162,6 +164,12 @@ func Load() (*Config, error) {
 	}
 	if cfg.RedisURL == "" {
 		return nil, fmt.Errorf("REDIS_URL is required")
+	}
+	if cfg.LLMDailySpendCapCents <= 0 {
+		return nil, fmt.Errorf("LLM_DAILY_SPEND_CAP_CENTS must be positive")
+	}
+	if cfg.LLMMaxSpendPerReceiptCents <= 0 {
+		return nil, fmt.Errorf("LLM_MAX_SPEND_PER_RECEIPT_CENTS must be positive")
 	}
 	if cfg.AnonIdentityTransport != "cookie" && cfg.AnonIdentityTransport != "header" {
 		return nil, fmt.Errorf("ANON_IDENTITY_TRANSPORT must be 'cookie' or 'header', got %q", cfg.AnonIdentityTransport)

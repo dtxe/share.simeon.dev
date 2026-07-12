@@ -88,7 +88,13 @@ func main() {
 	default:
 		log.Fatalf("unknown EXTRACTION_STRATEGY %q", cfg.ExtractionStrategy)
 	}
-
+	if extractor.MaxCalls() <= 0 {
+		log.Fatalf("extraction strategy %q has invalid MaxCalls %d", extractor.Name(), extractor.MaxCalls())
+	}
+	if extractor.MaxCalls() > cfg.LLMMaxSpendPerReceiptCents/extraction.ReservationCentsPerCall {
+		log.Fatalf("extraction strategy %q requires %d cents but per-receipt cap is %d cents",
+			extractor.Name(), extractor.MaxCalls()*extraction.ReservationCentsPerCall, cfg.LLMMaxSpendPerReceiptCents)
+	}
 	st := store.New(pool)
 	rs := receipts.New(cfg.UploadDir)
 
@@ -114,7 +120,7 @@ func main() {
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      90 * time.Second, // covers the 60s LLM extraction call
 
-		IdleTimeout:       120 * time.Second,
+		IdleTimeout: 120 * time.Second,
 	}
 
 	go func() {

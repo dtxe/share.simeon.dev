@@ -6,6 +6,8 @@ package ratelimit
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -68,35 +70,178 @@ func (l *Limiter) AllowInvalidViewTokenPerIP(ctx context.Context, ip string) (bo
 	return l.Allow(ctx, "rl:bad_view_token:"+ip, 30, time.Minute)
 }
 
-// ReserveLLMSpend atomically adds estimatedCents to today's running total
-// and reports whether that keeps the day under capCents. If it doesn't, the
-// reservation is rolled back (so a rejected call never counts against the
-// cap) and the caller should refuse the request. Key self-expires after
-// ~25h so it resets daily without a cron job.
-func (l *Limiter) ReserveLLMSpend(ctx context.Context, estimatedCents, capCents int) (bool, error) {
-	key := "rl:llm_spend:" + time.Now().UTC().Format("2006-01-02")
+const (
+	reservationTTL = 25 * time.Hour
+	resvTTLsecs    = int64(reservationTTL / time.Second)
+)
 
-	total, err := l.rdb.IncrBy(ctx, key, int64(estimatedCents)).Result()
+// SpendReservation represents an accepted LLM spend reservation that can be
+// finalized against the same daily bucket even if UTC midnight passes.
+type SpendReservation struct {
+	ReservationID string
+	DateKey       string // daily bucket identifier, e.g. "2026-07-12"
+	ReservedCents int
+}
+
+// reserveLua atomically checks the cap, increments the daily total, and
+// records a reservation.
+//
+// KEYS[1] — daily total key  rl:llm_spend:{date}
+// KEYS[2] — reservation key  rl:llm_resv:{date}:<id>
+// ARGV[1] — estimatedCents (int string)
+// ARGV[2] — capCents        (int string)
+// ARGV[3] - ttl seconds
+//
+// Returns a two-element array: [status (1=ok, 0=rejected), new_total].
+var reserveLua = redis.NewScript(`
+local daily  = KEYS[1]
+local resv   = KEYS[2]
+local amount = tonumber(ARGV[1])
+local cap    = tonumber(ARGV[2])
+local ttl    = tonumber(ARGV[3])
+
+local cur = redis.call('GET', daily)
+if not cur then cur = 0 else cur = tonumber(cur) end
+
+if cur + amount > cap then
+    return {0, cur}
+end
+
+local new_total = redis.call('INCRBY', daily, amount)
+if new_total == amount then
+    redis.call('EXPIRE', daily, ttl)
+end
+
+redis.call('SET', resv, amount, 'EX', ttl)
+return {1, new_total}
+`)
+
+// finalizeLua atomically replaces the reservation with the accounted cost.
+// If another caller already finalized the reservation, it is a no-op.
+//
+// KEYS[1] — daily total key  rl:llm_spend:{date}
+// KEYS[2] — reservation key  rl:llm_resv:{date}:<id>
+// ARGV[1] - accounted cents
+// ARGV[2] - ttl seconds
+//
+// Returns 1 on successful finalization, 0 if already finalized (no-op).
+var finalizeLua = redis.NewScript(`
+local daily  = KEYS[1]
+local resv   = KEYS[2]
+local accounted = tonumber(ARGV[1])
+local ttl = tonumber(ARGV[2])
+
+local v = redis.call('GET', resv)
+if not v then
+    return 0
+end
+local reserved = tonumber(v)
+if redis.call('EXISTS', daily) == 1 then
+    redis.call('INCRBY', daily, accounted - reserved)
+else
+    redis.call('SET', daily, accounted, 'EX', ttl)
+end
+redis.call('DEL', resv)
+return 1
+`)
+
+// dailyKeys returns the Redis keys for the given dateKey.  Both keys use the
+// same {hash:tag} so Lua scripts run atomically on a single cluster slot.
+func dailyKeys(dateKey string) (dailyTotalKey, resvPrefix string) {
+	return "rl:llm_spend:{" + dateKey + "}", "rl:llm_resv:{" + dateKey + "}:"
+}
+
+func generateReservationID() (string, error) {
+	b := make([]byte, 16)
+	if _, err := rand.Read(b); err != nil {
+		return "", fmt.Errorf("ratelimit: generate reservation ID: %w", err)
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// reserveLLMSpend is the shared implementation for both the compat wrapper
+// and the full reservation API.  It runs the Lua script and builds the
+// SpendReservation when the reservation is accepted.
+func (l *Limiter) reserveLLMSpend(ctx context.Context, dateKey string, estimatedCents, capCents int, returnReservation bool) (*SpendReservation, bool, error) {
+	if estimatedCents < 0 {
+		return nil, false, fmt.Errorf("ratelimit: reservation amount must not be negative")
+	}
+	if capCents <= 0 {
+		return nil, false, fmt.Errorf("ratelimit: spend cap must be positive")
+	}
+	resvID, err := generateReservationID()
+	if err != nil {
+		return nil, false, err
+	}
+	dailyKey, prefix := dailyKeys(dateKey)
+	resvKey := prefix + resvID
+
+	vals, err := reserveLua.Run(ctx, l.rdb, []string{dailyKey, resvKey}, estimatedCents, capCents, resvTTLsecs).Result()
+	if err != nil {
+		return nil, false, err
+	}
+
+	arr, ok := vals.([]interface{})
+	if !ok || len(arr) < 2 {
+		return nil, false, fmt.Errorf("ratelimit: unexpected Lua result type %T", vals)
+	}
+
+	status, ok1 := arr[0].(int64)
+	if !ok1 {
+		return nil, false, fmt.Errorf("ratelimit: unexpected Lua status type %T", arr[0])
+	}
+
+	if status == 0 {
+		return nil, false, nil // rejected
+	}
+
+	if !returnReservation {
+		return nil, true, nil // accepted, caller doesn't want reservation object
+	}
+
+	return &SpendReservation{
+		ReservationID: resvID,
+		DateKey:       dateKey,
+		ReservedCents: estimatedCents,
+	}, true, nil
+}
+
+// ReserveLLMSpendDetailed atomically checks the daily spend cap and, if the
+// estimatedCents fits under the capCents, records a reservation, increments
+// the daily total, and returns a SpendReservation.  The caller MUST call
+// FinalizeLLMSpend once the actual cost is known so the reservation metadata
+// is cleaned up.  Abandoned reservations expire automatically after ~25 h.
+func (l *Limiter) ReserveLLMSpendDetailed(ctx context.Context, estimatedCents, capCents int) (*SpendReservation, bool, error) {
+	dateKey := time.Now().UTC().Format("2006-01-02")
+	return l.reserveLLMSpend(ctx, dateKey, estimatedCents, capCents, true)
+}
+
+// FinalizeLLMSpend atomically reconciles a reservation to accountedCents.
+// It returns false without changing the total if the reservation was already
+// finalized. Unknown-cost calls should be accounted at the configured
+// per-call reservation amount rather than zero.
+func (l *Limiter) FinalizeLLMSpend(ctx context.Context, res *SpendReservation, accountedCents int) (bool, error) {
+	if res == nil {
+		return false, fmt.Errorf("ratelimit: FinalizeLLMSpend called with nil reservation")
+	}
+	if accountedCents < 0 {
+		return false, fmt.Errorf("ratelimit: accounted cost must not be negative")
+	}
+	dailyKey, prefix := dailyKeys(res.DateKey)
+	resvKey := prefix + res.ReservationID
+
+	result, err := finalizeLua.Run(ctx, l.rdb, []string{dailyKey, resvKey}, accountedCents, resvTTLsecs).Int()
 	if err != nil {
 		return false, err
 	}
-	if total == int64(estimatedCents) {
-		if err := l.rdb.Expire(ctx, key, 25*time.Hour).Err(); err != nil {
-			return false, err
-		}
-	}
-	if total > int64(capCents) {
-		// Roll back this reservation — it wasn't actually spent.
-		_, _ = l.rdb.DecrBy(ctx, key, int64(estimatedCents)).Result()
-		return false, nil
-	}
-	return true, nil
+	return result == 1, nil
 }
 
 // PeekLLMSpend reads today's running total without changing it.
 func (l *Limiter) PeekLLMSpend(ctx context.Context) (int, error) {
-	key := "rl:llm_spend:" + time.Now().UTC().Format("2006-01-02")
-	v, err := l.rdb.Get(ctx, key).Int()
+	dateKey := time.Now().UTC().Format("2006-01-02")
+	dailyKey, _ := dailyKeys(dateKey)
+	v, err := l.rdb.Get(ctx, dailyKey).Int()
 	if err != nil {
 		if err == redis.Nil {
 			return 0, nil
@@ -104,12 +249,4 @@ func (l *Limiter) PeekLLMSpend(ctx context.Context) (int, error) {
 		return 0, err
 	}
 	return v, nil
-}
-
-// AdjustLLMSpend corrects a prior estimate once the real cost is known
-// (e.g. from the provider's reported token usage). deltaCents may be
-// negative if the estimate overshot.
-func (l *Limiter) AdjustLLMSpend(ctx context.Context, deltaCents int) error {
-	key := "rl:llm_spend:" + time.Now().UTC().Format("2006-01-02")
-	return l.rdb.IncrBy(ctx, key, int64(deltaCents)).Err()
 }

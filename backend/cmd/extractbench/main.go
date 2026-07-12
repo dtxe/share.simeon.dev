@@ -19,7 +19,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"math"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -105,7 +104,7 @@ func main() {
 
 		computed := computedSubtotalCents(result.Receipt.Items)
 		matchMark := "✗"
-		if result.SubtotalMatched {
+		if result.SubtotalMatched != nil && *result.SubtotalMatched {
 			matchMark = "✓"
 			matchCount++
 		}
@@ -120,7 +119,9 @@ func main() {
 		for _, a := range result.Attempts {
 			promptTok += a.PromptTok
 			completeTok += a.CompleteTok
-			costCents += a.CostCents
+			if a.CostCents != nil {
+				costCents += *a.CostCents
+			}
 		}
 		totalCostCents += costCents
 
@@ -132,6 +133,18 @@ func main() {
 	fmt.Println(strings.Repeat("-", 100))
 	fmt.Printf("match rate: %d/%d   total cost: %d¢   total time: %s\n",
 		matchCount, len(files), totalCostCents, totalLatency.Round(time.Millisecond))
+}
+
+func computedSubtotalCents(items []llm.ExtractedItem) int64 {
+	var sum int64
+	for _, it := range items {
+		qty := it.Quantity
+		if qty <= 0 {
+			qty = 1
+		}
+		sum += int64(float64(it.PriceCents)*qty + 0.5)
+	}
+	return sum
 }
 
 func receiptFiles(dir string) ([]string, error) {
@@ -164,16 +177,4 @@ func loadExpected(dir string) map[string]expectedEntry {
 		return nil
 	}
 	return m
-}
-
-func computedSubtotalCents(items []llm.ExtractedItem) int64 {
-	var sum float64
-	for _, it := range items {
-		qty := it.Quantity
-		if qty <= 0 {
-			qty = 1
-		}
-		sum += float64(it.PriceCents) * qty
-	}
-	return int64(math.Round(sum))
 }

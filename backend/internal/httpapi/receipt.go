@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"io"
 	"log"
 	"math"
@@ -14,17 +16,12 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"share/backend/internal/auth"
+	"share/backend/internal/extraction"
 	"share/backend/internal/receipts"
 	"share/backend/internal/store"
 )
 
 const maxExtractPerSession = 5
-
-// estimatedCentsPerExtractionCall is a conservative per-call placeholder for
-// sizing the upfront Redis spend-cap reservation; corrected below via
-// AdjustLLMSpend once real usage is known. A strategy that makes multiple
-// calls per Run reserves this times its MaxCalls().
-const estimatedCentsPerExtractionCall = 1
 
 func (s *Server) handleUploadReceipt(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUser(w, r)
@@ -136,19 +133,32 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	}
 
 	maxCalls := s.Extractor.MaxCalls()
-	estimatedCents := estimatedCentsPerExtractionCall * maxCalls
-	reserved, err := s.RL.ReserveLLMSpend(ctx, estimatedCents, s.Cfg.LLMDailySpendCapCents)
-	if err != nil {
+	if maxCalls <= 0 {
+		log.Printf("extract: strategy %q returned invalid MaxCalls %d", s.Extractor.Name(), maxCalls)
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if !reserved {
-		writeJSONError(w, http.StatusServiceUnavailable, "daily extraction budget reached, try manual entry")
+	if maxCalls > s.Cfg.LLMMaxSpendPerReceiptCents/extraction.ReservationCentsPerCall {
+		writeJSONError(w, http.StatusServiceUnavailable, "extraction strategy exceeds the per-receipt budget")
+		return
+	}
+	reservedCents := extraction.ReservationCentsPerCall * maxCalls
+	runID, err := s.Store.BeginExtractionRun(ctx, store.BeginExtractionRunInput{
+		SessionID:       sessionID,
+		Strategy:        s.Extractor.Name(),
+		MaxCalls:        maxCalls,
+		ReceiptCapCents: s.Cfg.LLMMaxSpendPerReceiptCents,
+		ReservedCents:   reservedCents,
+	})
+	if err != nil {
+		log.Printf("extract: begin telemetry session=%s: %v", sessionID, err)
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
 
 	f, err := s.Receipts.Open(*sess.ReceiptImagePath)
 	if err != nil {
+		s.completeEmptyExtractionRun(runID, "error", "opening receipt failed")
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
@@ -156,7 +166,20 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 
 	imageBytes, err := io.ReadAll(f)
 	if err != nil {
+		s.completeEmptyExtractionRun(runID, "error", "reading receipt failed")
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+
+	reservation, reserved, err := s.RL.ReserveLLMSpendDetailed(ctx, reservedCents, s.Cfg.LLMDailySpendCapCents)
+	if err != nil {
+		s.completeEmptyExtractionRun(runID, "error", "spend reservation failed")
+		writeJSONError(w, http.StatusInternalServerError, "internal error")
+		return
+	}
+	if !reserved {
+		s.completeEmptyExtractionRun(runID, "rejected", "daily extraction budget reached")
+		writeJSONError(w, http.StatusServiceUnavailable, "daily extraction budget reached, try manual entry")
 		return
 	}
 
@@ -164,52 +187,52 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	runResult, runErr := s.Extractor.Run(extractCtx, imageBytes, "image/jpeg")
+	if runErr == nil && len(runResult.Attempts) == 0 {
+		runErr = fmt.Errorf("strategy succeeded without reporting an attempt")
+	}
+	attemptRows, accountedCents, knownActualCost, contractErr := buildAttemptTelemetry(runResult.Attempts, maxCalls)
+	if contractErr != nil {
+		runErr = errors.Join(runErr, contractErr)
+	}
+	accountingCtx, accountingCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	_, reconcileErr := s.RL.FinalizeLLMSpend(accountingCtx, reservation, accountedCents)
+	if reconcileErr != nil {
+		log.Printf("extract: reconcile spend run=%s: %v", runID, reconcileErr)
+	}
+	terminalStatus := "success"
+	var runErrMsg *string
+	if runErr != nil {
+		terminalStatus = "error"
+		msg := "extraction failed"
+		runErrMsg = &msg
+	}
+	accountedCost := accountedCents
+	telemetryErr := s.Store.CompleteExtractionRun(accountingCtx, store.CompleteExtractionRunInput{
+		RunID:                runID,
+		Status:               terminalStatus,
+		ErrorMessage:         runErrMsg,
+		SubtotalMatched:      runResult.SubtotalMatched,
+		SubtotalDiffCents:    runResult.SubtotalDiffCents,
+		KnownActualCostCents: knownActualCost,
+		AccountedCostCents:   &accountedCost,
+		ReservationAccepted:  true,
+		SpendReconciled:      reconcileErr == nil,
+		CompletedAt:          time.Now(),
+		Attempts:             attemptRows,
+	})
+	accountingCancel()
+	if telemetryErr != nil {
+		log.Printf("extract: complete telemetry run=%s: %v", runID, telemetryErr)
+		writeJSONError(w, http.StatusInternalServerError, "extraction telemetry failed")
+		return
+	}
 	if runErr != nil {
 		if s.Cfg.Debug {
 			log.Printf("debug: extract session=%s strategy=%s: %v", sessionID, s.Extractor.Name(), runErr)
 		}
-		msg := "extraction failed"
-		_ = s.Store.InsertExtractionRun(ctx, store.NewExtractionRun{
-			SessionID:    sessionID,
-			Strategy:     s.Extractor.Name(),
-			Attempt:      1,
-			Status:       "error",
-			ErrorMessage: &msg,
-		})
-		// Don't leak upstream error detail to the client — internal/llm's own
-		// error wrapping avoids echoing request content, but stay generic here too.
 		writeJSONError(w, http.StatusBadGateway, "extraction failed")
 		return
 	}
-
-	actualCents := 0
-	for i, attempt := range runResult.Attempts {
-		actualCents += attempt.CostCents
-		status := "success"
-		var errMsg *string
-		if attempt.Err != nil {
-			status = "error"
-			msg := attempt.Err.Error()
-			errMsg = &msg
-		}
-		promptTok, completeTok, costCents := attempt.PromptTok, attempt.CompleteTok, attempt.CostCents
-		_ = s.Store.InsertExtractionRun(ctx, store.NewExtractionRun{
-			SessionID:         sessionID,
-			Strategy:          s.Extractor.Name(),
-			Attempt:           i + 1,
-			Provider:          attempt.Provider,
-			Model:             attempt.Model,
-			Status:            status,
-			ErrorMessage:      errMsg,
-			RawResponse:       attempt.RawJSON,
-			PromptTokens:      &promptTok,
-			CompletionTokens:  &completeTok,
-			CostCents:         &costCents,
-			SubtotalMatched:   &runResult.SubtotalMatched,
-			SubtotalDiffCents: intPtr(int(runResult.SubtotalDiffCents)),
-		})
-	}
-	_ = s.RL.AdjustLLMSpend(ctx, actualCents-estimatedCents)
 
 	// Persist server-side rather than waiting on the client to round-trip a
 	// separate dishes/bulk save — the client only gets a reviewed *edit* of
@@ -302,4 +325,76 @@ func formatQtyPrefix(qty float64) string {
 	return strconv.FormatFloat(qty, 'f', -1, 64) + "x "
 }
 
-func intPtr(v int) *int { return &v }
+func (s *Server) completeEmptyExtractionRun(runID, status, message string) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	zero := 0
+	if err := s.Store.CompleteExtractionRun(ctx, store.CompleteExtractionRunInput{
+		RunID:                runID,
+		Status:               status,
+		ErrorMessage:         &message,
+		KnownActualCostCents: &zero,
+		AccountedCostCents:   &zero,
+		SpendReconciled:      true,
+		CompletedAt:          time.Now(),
+	}); err != nil {
+		log.Printf("extract: complete empty telemetry run=%s: %v", runID, err)
+	}
+}
+
+func buildAttemptTelemetry(attempts []extraction.Attempt, maxCalls int) ([]store.ExtractionAttempt, int, *int, error) {
+	var contractErr error
+	if len(attempts) > maxCalls {
+		contractErr = fmt.Errorf("strategy reported %d attempts, MaxCalls is %d", len(attempts), maxCalls)
+	}
+
+	rows := make([]store.ExtractionAttempt, 0, len(attempts))
+	accountedCents := 0
+	knownActualCents := 0
+	allCostsKnown := true
+	maxInt := int(^uint(0) >> 1)
+
+	for i, attempt := range attempts {
+		if contractErr == nil && (attempt.Provider == "" || attempt.Model == "") {
+			contractErr = fmt.Errorf("attempt %d is missing provider or model", i+1)
+		}
+		status := "success"
+		var errMsg *string
+		if attempt.Err != nil {
+			status = "error"
+			msg := attempt.Err.Error()
+			errMsg = &msg
+		}
+		promptTok, completeTok := attempt.PromptTok, attempt.CompleteTok
+		costCents := attempt.CostCents
+		if costCents == nil || *costCents < 0 || accountedCents > maxInt-*costCents {
+			if costCents != nil && *costCents < 0 && contractErr == nil {
+				contractErr = fmt.Errorf("attempt %d reported a negative cost", i+1)
+			}
+			costCents = nil
+			allCostsKnown = false
+			accountedCents += extraction.ReservationCentsPerCall
+		} else {
+			knownActualCents += *costCents
+			accountedCents += *costCents
+		}
+		rows = append(rows, store.ExtractionAttempt{
+			Attempt:           i + 1,
+			Provider:          attempt.Provider,
+			Model:             attempt.Model,
+			Status:            status,
+			ErrorMessage:      errMsg,
+			RawResponse:       attempt.RawJSON,
+			PromptTokens:      &promptTok,
+			CompletionTokens:  &completeTok,
+			CostCents:         costCents,
+			SubtotalMatched:   attempt.SubtotalMatched,
+			SubtotalDiffCents: attempt.SubtotalDiffCents,
+		})
+	}
+
+	if allCostsKnown {
+		return rows, accountedCents, &knownActualCents, contractErr
+	}
+	return rows, accountedCents, nil, contractErr
+}

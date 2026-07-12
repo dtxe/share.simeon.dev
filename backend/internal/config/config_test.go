@@ -80,6 +80,28 @@ func TestLoadRequiresInputAndOutputPricingTogether(t *testing.T) {
 	}
 }
 
+func TestLoadDefaultsReceiptSpendCap(t *testing.T) {
+	setRequiredEnv(t)
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.LLMMaxSpendPerReceiptCents != 5 {
+		t.Fatalf("LLMMaxSpendPerReceiptCents = %d, want 5", cfg.LLMMaxSpendPerReceiptCents)
+	}
+}
+
+func TestLoadRejectsNonPositiveReceiptSpendCap(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("LLM_MAX_SPEND_PER_RECEIPT_CENTS", "0")
+
+	_, err := Load()
+	if err == nil || !strings.Contains(err.Error(), "LLM_MAX_SPEND_PER_RECEIPT_CENTS must be positive") {
+		t.Fatalf("Load error = %v, want positive receipt spend cap error", err)
+	}
+}
+
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 
@@ -92,4 +114,5 @@ func setRequiredEnv(t *testing.T) {
 	t.Setenv("LLM_INPUT_COST_PER_1K_TOKENS_CENTS_FILE", "")
 	t.Setenv("LLM_OUTPUT_COST_PER_1K_TOKENS_CENTS", "")
 	t.Setenv("LLM_OUTPUT_COST_PER_1K_TOKENS_CENTS_FILE", "")
+	t.Setenv("LLM_MAX_SPEND_PER_RECEIPT_CENTS", "")
 }

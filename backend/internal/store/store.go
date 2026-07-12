@@ -708,9 +708,10 @@ func (s *Store) DeleteExpiredWebauthnCeremonies(ctx context.Context) (int64, err
 }
 
 // DeleteExpiredBillSessions removes stale bills (cascading to their people,
-// dishes, portions, and extraction_runs) and returns the receipt image
-// paths that need deleting from disk too — the DB delete doesn't touch the
-// filesystem, so the caller (internal/cleanup) is responsible for that.
+// dishes, portions, extraction_runs, and extraction_attempts) and returns
+// the receipt image paths that need deleting from disk too — the DB delete
+// doesn't touch the filesystem, so the caller (internal/cleanup) is
+// responsible for that.
 func (s *Store) DeleteExpiredBillSessions(ctx context.Context) (receiptPaths []string, count int64, err error) {
 	rows, err := s.Pool.Query(ctx, `
 		DELETE FROM bill_sessions WHERE expires_at < now()
@@ -734,11 +735,35 @@ func (s *Store) DeleteExpiredBillSessions(ctx context.Context) (receiptPaths []s
 	return receiptPaths, count, rows.Err()
 }
 
-// NewExtractionRun is one row of internal/extraction.RunResult.Attempts,
-// tagged with the strategy name and 1-based attempt index within that Run.
-type NewExtractionRun struct {
-	SessionID         string
-	Strategy          string
+// --- Normalized extraction telemetry ---
+
+// BeginExtractionRunInput contains parameters known upfront, before the
+// extraction strategy begins making LLM calls.
+type BeginExtractionRunInput struct {
+	SessionID       string
+	Strategy        string
+	MaxCalls        int
+	ReceiptCapCents int
+	ReservedCents   int
+}
+
+// BeginExtractionRun inserts a new extraction_runs row with status 'running'
+// and returns the run UUID string.
+func (s *Store) BeginExtractionRun(ctx context.Context, in BeginExtractionRunInput) (string, error) {
+	var runID string
+	err := s.Pool.QueryRow(ctx, `
+		INSERT INTO extraction_runs (session_id, strategy, status, max_calls, receipt_cap_cents, reserved_cents, attempt_count)
+		VALUES ($1, $2, 'running', $3, $4, $5, 0)
+		RETURNING id::text
+	`, in.SessionID, in.Strategy, in.MaxCalls, in.ReceiptCapCents, in.ReservedCents).Scan(&runID)
+	if err != nil {
+		return "", err
+	}
+	return runID, nil
+}
+
+// ExtractionAttempt represents one LLM call within an extraction run.
+type ExtractionAttempt struct {
 	Attempt           int
 	Provider          string
 	Model             string
@@ -749,24 +774,89 @@ type NewExtractionRun struct {
 	CompletionTokens  *int
 	CostCents         *int
 	SubtotalMatched   *bool
-	SubtotalDiffCents *int
+	SubtotalDiffCents *int64
 }
 
-// InsertExtractionRun records one LLM call. A strategy that makes multiple
-// calls per Run (e.g. a retry-on-mismatch strategy) gets one row per call,
-// not one per handleExtract request — see internal/extraction.
-func (s *Store) InsertExtractionRun(ctx context.Context, r NewExtractionRun) error {
-	var rawResponse any
-	if len(r.RawResponse) > 0 {
-		rawResponse = r.RawResponse
+// CompleteExtractionRunInput contains the terminal state of an extraction run
+// and all child attempts to persist atomically.
+type CompleteExtractionRunInput struct {
+	RunID                string
+	Status               string // "success" | "error" | "rejected"
+	ErrorMessage         *string
+	SubtotalMatched      *bool
+	SubtotalDiffCents    *int64
+	KnownActualCostCents *int
+	AccountedCostCents   *int
+	ReservationAccepted  bool
+	SpendReconciled      bool
+	CompletedAt          time.Time
+	Attempts             []ExtractionAttempt
+}
+
+// CompleteExtractionRun transactionally inserts all child extraction_attempts
+// and updates the parent run's terminal fields (status, costs, completion
+// time, etc.) in a single transaction.
+func (s *Store) CompleteExtractionRun(ctx context.Context, in CompleteExtractionRunInput) error {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
 	}
+	defer tx.Rollback(ctx)
+
+	for _, a := range in.Attempts {
+		var rawResponse any
+		if len(a.RawResponse) > 0 {
+			rawResponse = a.RawResponse
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO extraction_attempts (run_id, attempt, provider, model, status, error_message, raw_response,
+				prompt_tokens, completion_tokens, cost_cents, subtotal_matched, subtotal_diff_cents)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+			ON CONFLICT (run_id, attempt) DO UPDATE SET
+				provider = EXCLUDED.provider,
+				model = EXCLUDED.model,
+				status = EXCLUDED.status,
+				error_message = EXCLUDED.error_message,
+				raw_response = EXCLUDED.raw_response,
+				prompt_tokens = EXCLUDED.prompt_tokens,
+				completion_tokens = EXCLUDED.completion_tokens,
+				cost_cents = EXCLUDED.cost_cents,
+				subtotal_matched = EXCLUDED.subtotal_matched,
+				subtotal_diff_cents = EXCLUDED.subtotal_diff_cents
+		`, in.RunID, a.Attempt, a.Provider, a.Model, a.Status, a.ErrorMessage, rawResponse,
+			a.PromptTokens, a.CompletionTokens, a.CostCents, a.SubtotalMatched, a.SubtotalDiffCents); err != nil {
+			return err
+		}
+	}
+
+	if _, err := tx.Exec(ctx, `
+		UPDATE extraction_runs
+		SET status = $2,
+		    error_message = $3,
+		    subtotal_matched = $4,
+		    subtotal_diff_cents = $5,
+		    known_actual_cost_cents = $6,
+		    accounted_cost_cents = $7,
+		    attempt_count = $8,
+		    completed_at = $9,
+		    spend_reconciled = $10,
+		    reservation_accepted = $11
+		WHERE id = $1
+	`, in.RunID, in.Status, in.ErrorMessage, in.SubtotalMatched, in.SubtotalDiffCents,
+		in.KnownActualCostCents, in.AccountedCostCents, len(in.Attempts), in.CompletedAt,
+		in.SpendReconciled, in.ReservationAccepted); err != nil {
+		return err
+	}
+
+	return tx.Commit(ctx)
+}
+
+// MarkExtractionSpendReconciled sets spend_reconciled = true on the run,
+// indicating its actual cost has been incorporated into the daily spend
+// ledger.
+func (s *Store) MarkExtractionSpendReconciled(ctx context.Context, runID string) error {
 	_, err := s.Pool.Exec(ctx, `
-		INSERT INTO extraction_runs (
-			session_id, strategy, attempt, provider, model, status, error_message, raw_response,
-			prompt_tokens, completion_tokens, cost_cents, subtotal_matched, subtotal_diff_cents
-		)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
-	`, r.SessionID, r.Strategy, r.Attempt, r.Provider, r.Model, r.Status, r.ErrorMessage, rawResponse,
-		r.PromptTokens, r.CompletionTokens, r.CostCents, r.SubtotalMatched, r.SubtotalDiffCents)
+		UPDATE extraction_runs SET spend_reconciled = true WHERE id = $1
+	`, runID)
 	return err
 }

@@ -33,10 +33,16 @@ func (s *Strategy) Name() string { return "baseline" }
 
 func (s *Strategy) MaxCalls() int { return 1 }
 
-func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (*extraction.RunResult, error) {
+func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (extraction.RunResult, error) {
 	result, err := s.LLM.ExtractReceipt(ctx, image, mimeType)
 	if err != nil {
-		return nil, err
+		return extraction.RunResult{
+			Attempts: []extraction.Attempt{{
+				Provider: s.LLM.Name(),
+				Model:    s.ModelName,
+				Err:      err,
+			}},
+		}, err
 	}
 
 	costCents := extraction.EstimateCostCents(result.Usage.PromptTokens, result.Usage.CompletionTokens, s.InputCostPer1KTokensCents, s.OutputCostPer1KTokensCents)
@@ -44,19 +50,21 @@ func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (*ext
 
 	matched, diffCents := extraction.CheckSubtotal(result.Receipt.Items, result.Receipt.SubtotalCents)
 
-	return &extraction.RunResult{
+	return extraction.RunResult{
 		Receipt: result.Receipt,
 		Attempts: []extraction.Attempt{
 			{
-				Provider:    s.LLM.Name(),
-				Model:       s.ModelName,
-				PromptTok:   result.Usage.PromptTokens,
-				CompleteTok: result.Usage.CompletionTokens,
-				CostCents:   costCents,
-				RawJSON:     rawJSON,
+				Provider:          s.LLM.Name(),
+				Model:             s.ModelName,
+				PromptTok:         result.Usage.PromptTokens,
+				CompleteTok:       result.Usage.CompletionTokens,
+				CostCents:         &costCents,
+				RawJSON:           rawJSON,
+				SubtotalMatched:   &matched,
+				SubtotalDiffCents: &diffCents,
 			},
 		},
-		SubtotalMatched:   matched,
-		SubtotalDiffCents: diffCents,
+		SubtotalMatched:   &matched,
+		SubtotalDiffCents: &diffCents,
 	}, nil
 }

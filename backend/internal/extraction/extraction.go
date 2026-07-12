@@ -10,24 +10,30 @@ import (
 	"share/backend/internal/llm"
 )
 
+// ReservationCentsPerCall is the admission reservation for one possible LLM
+// call. It is not a hard ceiling on the provider's eventual charge.
+const ReservationCentsPerCall = 2
+
 // Attempt records one LLM call made during a Run. A strategy that retries
 // or takes a multi-call path reports one Attempt per call, so the wrong
 // first guess and the corrected second one are both visible.
 type Attempt struct {
-	Provider    string
-	Model       string
-	PromptTok   int
-	CompleteTok int
-	CostCents   int
-	RawJSON     []byte // the parsed ExtractedReceipt, marshaled back
-	Err         error  // non-nil if this attempt failed
+	Provider          string
+	Model             string
+	PromptTok         int
+	CompleteTok       int
+	CostCents         *int
+	RawJSON           []byte // the parsed ExtractedReceipt, marshaled back
+	Err               error  // non-nil if this attempt failed
+	SubtotalMatched   *bool
+	SubtotalDiffCents *int64
 }
 
 type RunResult struct {
 	Receipt           llm.ExtractedReceipt
 	Attempts          []Attempt
-	SubtotalMatched   bool
-	SubtotalDiffCents int64
+	SubtotalMatched   *bool
+	SubtotalDiffCents *int64
 }
 
 type Strategy interface {
@@ -36,5 +42,7 @@ type Strategy interface {
 	// for one Run — used to size the upfront spend-cap reservation and the
 	// handler's per-call timeout budget.
 	MaxCalls() int
-	Run(ctx context.Context, image []byte, mimeType string) (*RunResult, error)
+	// Run returns every initiated provider call in Attempts even when the run
+	// terminates with an error. Calls with unknown usage leave CostCents nil.
+	Run(ctx context.Context, image []byte, mimeType string) (RunResult, error)
 }
