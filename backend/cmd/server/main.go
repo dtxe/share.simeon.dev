@@ -18,6 +18,7 @@ import (
 	"share/backend/internal/extraction"
 	"share/backend/internal/extraction/baseline"
 	"share/backend/internal/extraction/deterministic"
+	"share/backend/internal/extraction/feedback"
 	"share/backend/internal/httpapi"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
@@ -90,6 +91,9 @@ func main() {
 	case "deterministic_check":
 		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
 		extractor = deterministic.New(llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+	case "feedback_retry":
+		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
+		extractor = feedback.New(llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
 	default:
 		log.Fatalf("unknown EXTRACTION_STRATEGY %q", cfg.ExtractionStrategy)
 	}
