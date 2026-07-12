@@ -2,7 +2,6 @@ package httpapi
 
 import (
 	"context"
-	"encoding/json"
 	"io"
 	"log"
 	"math"
@@ -15,12 +14,17 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"share/backend/internal/auth"
-	"share/backend/internal/llm"
 	"share/backend/internal/receipts"
 	"share/backend/internal/store"
 )
 
 const maxExtractPerSession = 5
+
+// estimatedCentsPerExtractionCall is a conservative per-call placeholder for
+// sizing the upfront Redis spend-cap reservation; corrected below via
+// AdjustLLMSpend once real usage is known. A strategy that makes multiple
+// calls per Run reserves this times its MaxCalls().
+const estimatedCentsPerExtractionCall = 1
 
 func (s *Server) handleUploadReceipt(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUser(w, r)
@@ -131,7 +135,8 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	const estimatedCents = 1 // conservative per-call placeholder; corrected below via AdjustLLMSpend once real usage is known
+	maxCalls := s.Extractor.MaxCalls()
+	estimatedCents := estimatedCentsPerExtractionCall * maxCalls
 	reserved, err := s.RL.ReserveLLMSpend(ctx, estimatedCents, s.Cfg.LLMDailySpendCapCents)
 	if err != nil {
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
@@ -155,44 +160,62 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	extractCtx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	extractCtx, cancel := context.WithTimeout(ctx, 60*time.Second*time.Duration(maxCalls))
 	defer cancel()
 
-	result, extractErr := s.LLM.ExtractReceipt(extractCtx, imageBytes, "image/jpeg")
-
-	status := "success"
-	var errMsg *string
-	var rawResponse []byte
-	if extractErr != nil {
-		status = "error"
-		msg := "extraction failed"
-		errMsg = &msg
+	runResult, runErr := s.Extractor.Run(extractCtx, imageBytes, "image/jpeg")
+	if runErr != nil {
 		if s.Cfg.Debug {
-			log.Printf("debug: extract session=%s provider=%s: %v", sessionID, s.LLM.Name(), extractErr)
+			log.Printf("debug: extract session=%s strategy=%s: %v", sessionID, s.Extractor.Name(), runErr)
 		}
-	} else {
-		actualCents := estimateCostCents(result.Usage, s.Cfg.LLMInputCostPer1KTokensCents, s.Cfg.LLMOutputCostPer1KTokensCents)
-		_ = s.RL.AdjustLLMSpend(ctx, actualCents-estimatedCents)
-		rawResponse, _ = json.Marshal(result.Receipt)
-	}
-
-	_, _ = s.Pool.Exec(ctx, `
-		INSERT INTO extraction_runs (session_id, provider, model, status, error_message, raw_response)
-		VALUES ($1, $2, $3, $4, $5, $6)
-	`, sessionID, s.LLM.Name(), s.Cfg.LLMModel, status, errMsg, rawResponse)
-
-	if extractErr != nil {
+		msg := "extraction failed"
+		_ = s.Store.InsertExtractionRun(ctx, store.NewExtractionRun{
+			SessionID:    sessionID,
+			Strategy:     s.Extractor.Name(),
+			Attempt:      1,
+			Status:       "error",
+			ErrorMessage: &msg,
+		})
 		// Don't leak upstream error detail to the client — internal/llm's own
 		// error wrapping avoids echoing request content, but stay generic here too.
 		writeJSONError(w, http.StatusBadGateway, "extraction failed")
 		return
 	}
 
+	actualCents := 0
+	for i, attempt := range runResult.Attempts {
+		actualCents += attempt.CostCents
+		status := "success"
+		var errMsg *string
+		if attempt.Err != nil {
+			status = "error"
+			msg := attempt.Err.Error()
+			errMsg = &msg
+		}
+		promptTok, completeTok, costCents := attempt.PromptTok, attempt.CompleteTok, attempt.CostCents
+		_ = s.Store.InsertExtractionRun(ctx, store.NewExtractionRun{
+			SessionID:         sessionID,
+			Strategy:          s.Extractor.Name(),
+			Attempt:           i + 1,
+			Provider:          attempt.Provider,
+			Model:             attempt.Model,
+			Status:            status,
+			ErrorMessage:      errMsg,
+			RawResponse:       attempt.RawJSON,
+			PromptTokens:      &promptTok,
+			CompletionTokens:  &completeTok,
+			CostCents:         &costCents,
+			SubtotalMatched:   &runResult.SubtotalMatched,
+			SubtotalDiffCents: intPtr(int(runResult.SubtotalDiffCents)),
+		})
+	}
+	_ = s.RL.AdjustLLMSpend(ctx, actualCents-estimatedCents)
+
 	// Persist server-side rather than waiting on the client to round-trip a
 	// separate dishes/bulk save — the client only gets a reviewed *edit* of
 	// what's already saved, not the sole path to saving it at all.
-	newDishes := make([]store.NewDish, 0, len(result.Receipt.Items))
-	for _, it := range result.Receipt.Items {
+	newDishes := make([]store.NewDish, 0, len(runResult.Receipt.Items))
+	for _, it := range runResult.Receipt.Items {
 		name := strings.TrimSpace(it.Name)
 		if name == "" {
 			continue
@@ -221,23 +244,23 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	// restaurantName/date on the Settle screen instead of us writing it here).
 	patch := store.SessionPatch{}
 	hasPatch := false
-	if name := strings.TrimSpace(result.Receipt.RestaurantName); name != "" {
+	if name := strings.TrimSpace(runResult.Receipt.RestaurantName); name != "" {
 		if len(name) > 120 {
 			name = name[:120]
 		}
 		patch.RestaurantName = &name
 		hasPatch = true
 	}
-	if result.Receipt.Date != "" {
-		if parsed, err := time.Parse("2006-01-02", result.Receipt.Date); err == nil {
+	if runResult.Receipt.Date != "" {
+		if parsed, err := time.Parse("2006-01-02", runResult.Receipt.Date); err == nil {
 			patch.BillDate = &parsed
 			hasPatch = true
 		}
 	}
 	if sess.TotalPaidCents == nil {
-		total := result.Receipt.TotalPaidCents
-		if total <= 0 && result.Receipt.SubtotalCents > 0 && result.Receipt.TipCents > 0 {
-			total = result.Receipt.SubtotalCents + result.Receipt.TipCents
+		total := runResult.Receipt.TotalPaidCents
+		if total <= 0 && runResult.Receipt.SubtotalCents > 0 && runResult.Receipt.TipCents > 0 {
+			total = runResult.Receipt.SubtotalCents + runResult.Receipt.TipCents
 		}
 		if total > 0 && total <= 5_000_000_00 {
 			patch.TotalPaidCents = &total
@@ -271,19 +294,12 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		}(*sess.ReceiptImagePath)
 	}
 
-	writeJSON(w, http.StatusOK, result.Receipt)
-}
-
-func estimateCostCents(usage llm.Usage, inputCostPer1KTokensCents, outputCostPer1KTokensCents float64) int {
-	cost := float64(usage.PromptTokens)/1000.0*inputCostPer1KTokensCents +
-		float64(usage.CompletionTokens)/1000.0*outputCostPer1KTokensCents
-	// Round rather than truncate — floor-ing every call systematically
-	// underreports spend against the daily cap, letting real spend drift
-	// past it over many calls.
-	return int(math.Round(cost))
+	writeJSON(w, http.StatusOK, runResult.Receipt)
 }
 
 // formatQtyPrefix formats a quantity as a compact name prefix, e.g. "2x " or "0.5x ".
 func formatQtyPrefix(qty float64) string {
 	return strconv.FormatFloat(qty, 'f', -1, 64) + "x "
 }
+
+func intPtr(v int) *int { return &v }

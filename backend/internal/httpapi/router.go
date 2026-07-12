@@ -10,21 +10,21 @@ import (
 	"share/backend/internal/auth"
 	"share/backend/internal/config"
 	"share/backend/internal/email"
-	"share/backend/internal/llm"
+	"share/backend/internal/extraction"
 	"share/backend/internal/ratelimit"
 	"share/backend/internal/receipts"
 	"share/backend/internal/store"
 )
 
 type Server struct {
-	Pool     *pgxpool.Pool
-	Cfg      *config.Config
-	Auth     *auth.Manager
-	Email    email.Provider
-	RL       *ratelimit.Limiter
-	LLM      llm.Provider
-	Store    *store.Store
-	Receipts *receipts.Storage
+	Pool      *pgxpool.Pool
+	Cfg       *config.Config
+	Auth      *auth.Manager
+	Email     email.Provider
+	RL        *ratelimit.Limiter
+	Extractor extraction.Strategy
+	Store     *store.Store
+	Receipts  *receipts.Storage
 }
 
 func NewRouter(s *Server) http.Handler {

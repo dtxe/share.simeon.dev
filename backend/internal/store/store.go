@@ -733,3 +733,40 @@ func (s *Store) DeleteExpiredBillSessions(ctx context.Context) (receiptPaths []s
 	}
 	return receiptPaths, count, rows.Err()
 }
+
+// NewExtractionRun is one row of internal/extraction.RunResult.Attempts,
+// tagged with the strategy name and 1-based attempt index within that Run.
+type NewExtractionRun struct {
+	SessionID         string
+	Strategy          string
+	Attempt           int
+	Provider          string
+	Model             string
+	Status            string // "success" | "error"
+	ErrorMessage      *string
+	RawResponse       []byte
+	PromptTokens      *int
+	CompletionTokens  *int
+	CostCents         *int
+	SubtotalMatched   *bool
+	SubtotalDiffCents *int
+}
+
+// InsertExtractionRun records one LLM call. A strategy that makes multiple
+// calls per Run (e.g. a retry-on-mismatch strategy) gets one row per call,
+// not one per handleExtract request — see internal/extraction.
+func (s *Store) InsertExtractionRun(ctx context.Context, r NewExtractionRun) error {
+	var rawResponse any
+	if len(r.RawResponse) > 0 {
+		rawResponse = r.RawResponse
+	}
+	_, err := s.Pool.Exec(ctx, `
+		INSERT INTO extraction_runs (
+			session_id, strategy, attempt, provider, model, status, error_message, raw_response,
+			prompt_tokens, completion_tokens, cost_cents, subtotal_matched, subtotal_diff_cents
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+	`, r.SessionID, r.Strategy, r.Attempt, r.Provider, r.Model, r.Status, r.ErrorMessage, rawResponse,
+		r.PromptTokens, r.CompletionTokens, r.CostCents, r.SubtotalMatched, r.SubtotalDiffCents)
+	return err
+}

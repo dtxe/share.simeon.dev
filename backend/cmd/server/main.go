@@ -15,6 +15,8 @@ import (
 	"share/backend/internal/config"
 	"share/backend/internal/db"
 	"share/backend/internal/email"
+	"share/backend/internal/extraction"
+	"share/backend/internal/extraction/baseline"
 	"share/backend/internal/httpapi"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
@@ -79,6 +81,14 @@ func main() {
 		log.Fatalf("unknown LLM_PROVIDER %q", cfg.LLMProvider)
 	}
 
+	var extractor extraction.Strategy
+	switch cfg.ExtractionStrategy {
+	case "baseline":
+		extractor = baseline.New(llmProvider, cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+	default:
+		log.Fatalf("unknown EXTRACTION_STRATEGY %q", cfg.ExtractionStrategy)
+	}
+
 	st := store.New(pool)
 	rs := receipts.New(cfg.UploadDir)
 
@@ -87,14 +97,14 @@ func main() {
 	go cleanup.Run(cleanupCtx, st, rs)
 
 	router := httpapi.NewRouter(&httpapi.Server{
-		Pool:     pool,
-		Cfg:      cfg,
-		Auth:     authManager,
-		Email:    emailProvider,
-		RL:       limiter,
-		LLM:      llmProvider,
-		Store:    st,
-		Receipts: rs,
+		Pool:      pool,
+		Cfg:       cfg,
+		Auth:      authManager,
+		Email:     emailProvider,
+		RL:        limiter,
+		Extractor: extractor,
+		Store:     st,
+		Receipts:  rs,
 	})
 
 	srv := &http.Server{

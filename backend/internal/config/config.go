@@ -67,6 +67,8 @@ type Config struct {
 	LLMOutputCostPer1KTokensCents float64
 	LLMDailySpendCapCents         int
 
+	ExtractionStrategy string
+
 	UploadDir string
 
 	Debug bool
@@ -143,6 +145,8 @@ func Load() (*Config, error) {
 		LLMModel:              getEnv("LLM_MODEL", defaultLLMModel),
 		LLMAPIKey:             getEnv("LLM_API_KEY", ""),
 		LLMDailySpendCapCents: getInt("LLM_DAILY_SPEND_CAP_CENTS", 100),
+
+		ExtractionStrategy: getEnv("EXTRACTION_STRATEGY", "baseline"),
 
 		UploadDir: getEnv("UPLOAD_DIR", "/data/uploads"),
 
