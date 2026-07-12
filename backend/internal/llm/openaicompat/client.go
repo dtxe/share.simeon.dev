@@ -155,8 +155,28 @@ var extractionSchema = map[string]any{
 }
 
 func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType string) (*llm.Result, error) {
+	raw, usage, err := c.ExtractWithSchema(ctx, image, mimeType, extractionPromptForModel(c.Model), extractionSchema, extractionReasoningBudgetTokens)
+	if err != nil {
+		return nil, err
+	}
+	var receipt llm.ExtractedReceipt
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&receipt); err != nil {
+		return nil, fmt.Errorf("openaicompat: decoding extracted receipt tool call arguments: %w (raw arguments: %s)", err, raw)
+	}
+	return &llm.Result{Receipt: receipt, Usage: usage}, nil
+}
+
+// ExtractWithSchema is the shared request/response plumbing (HTTP call,
+// base64 image part, forced tool-call decode, finish_reason:"length"
+// handling) behind every extraction strategy variant — only the prompt,
+// tool schema, and thinking budget differ between them, and each strategy
+// decodes the returned raw tool-call arguments into its own schema-specific
+// struct. ExtractReceipt is itself just this called with the baseline
+// prompt/schema/budget, decoded into llm.ExtractedReceipt.
+func (c *Client) ExtractWithSchema(ctx context.Context, image []byte, mimeType, prompt string, schema map[string]any, thinkingBudgetTokens int) (json.RawMessage, llm.Usage, error) {
 	dataURL := fmt.Sprintf("data:%s;base64,%s", mimeType, base64.StdEncoding.EncodeToString(image))
-	prompt := extractionPromptForModel(c.Model)
 
 	reqBody := chatRequest{
 		Model: c.Model,
@@ -174,7 +194,7 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 				Type: "function",
 				Function: functionDef{
 					Name:       extractFunctionName,
-					Parameters: extractionSchema,
+					Parameters: schema,
 				},
 			},
 		},
@@ -182,31 +202,31 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 			Type:     "function",
 			Function: toolChoiceTarget{Name: extractFunctionName},
 		},
-		Thinking:  thinkingConfigForModel(c.Model),
+		Thinking:  thinkingConfigForModel(c.Model, thinkingBudgetTokens),
 		MaxTokens: extractionMaxTokens,
 	}
 
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: marshal request: %w", err)
+		return nil, llm.Usage{}, fmt.Errorf("openaicompat: marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: build request: %w", err)
+		return nil, llm.Usage{}, fmt.Errorf("openaicompat: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: request failed: %w", err)
+		return nil, llm.Usage{}, fmt.Errorf("openaicompat: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return nil, fmt.Errorf("openaicompat: reading response: %w", err)
+		return nil, llm.Usage{}, fmt.Errorf("openaicompat: reading response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -218,62 +238,75 @@ func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType stri
 		if len(snippet) > 500 {
 			snippet = snippet[:500]
 		}
-		return nil, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
+		return nil, llm.Usage{}, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
 	}
 
 	var chatResp chatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return nil, fmt.Errorf("openaicompat: decoding response envelope: %w", err)
+		return nil, llm.Usage{}, fmt.Errorf("openaicompat: decoding response envelope: %w", err)
 	}
 	if len(chatResp.Choices) == 0 {
-		return nil, fmt.Errorf("openaicompat: no choices in response")
+		return nil, llm.Usage{}, fmt.Errorf("openaicompat: no choices in response")
+	}
+
+	usage := llm.Usage{
+		PromptTokens:     chatResp.Usage.PromptTokens,
+		CompletionTokens: chatResp.Usage.CompletionTokens,
 	}
 
 	if chatResp.Choices[0].FinishReason == "length" {
 		log.Printf("llm: extraction truncated at max_tokens (model=%s, completion_tokens=%d, reasoning_budget=%d) — tool-call JSON may be incomplete",
-			c.Model, chatResp.Usage.CompletionTokens, extractionReasoningBudgetTokens)
+			c.Model, chatResp.Usage.CompletionTokens, thinkingBudgetTokens)
 	}
 
 	msg := chatResp.Choices[0].Message
 	if len(msg.ToolCalls) == 0 {
-		return nil, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", msg.Content)
+		return nil, usage, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", msg.Content)
 	}
 	call := msg.ToolCalls[0]
 	if call.Function.Name != extractFunctionName {
-		return nil, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
+		return nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
 	}
 
-	var receipt llm.ExtractedReceipt
-	dec := json.NewDecoder(bytes.NewReader([]byte(call.Function.Arguments)))
-	dec.DisallowUnknownFields()
-	if err := dec.Decode(&receipt); err != nil {
-		return nil, fmt.Errorf("openaicompat: decoding extracted receipt tool call arguments: %w (raw arguments: %s)", err, call.Function.Arguments)
-	}
-
-	return &llm.Result{
-		Receipt: receipt,
-		Usage: llm.Usage{
-			PromptTokens:     chatResp.Usage.PromptTokens,
-			CompletionTokens: chatResp.Usage.CompletionTokens,
-		},
-	}, nil
+	return json.RawMessage(call.Function.Arguments), usage, nil
 }
 
 func extractionPromptForModel(model string) string {
-	if thinkingConfigForModel(model) != nil {
+	if SupportsThinking(model) {
 		return extractionPrompt
 	}
 	return extractionPrompt + "\n\n" + minimizeReasoningPromptSuffix
 }
 
-func thinkingConfigForModel(model string) *thinkingConfig {
+// SupportsThinking reports whether model is known to accept the
+// Fireworks/Anthropic-compatible "thinking" request field — live-verified
+// per model, per docs/agent_lessons.md (unverified models risk a 400).
+// Exported so other strategies can decide their own prompt/budget choices
+// consistently with this gate.
+func SupportsThinking(model string) bool {
 	switch model {
 	case kimiK2P7CodeModel, minimaxM3Model:
-		return &thinkingConfig{
-			Type:         "enabled",
-			BudgetTokens: extractionReasoningBudgetTokens,
-		}
+		return true
 	default:
+		return false
+	}
+}
+
+// MinimizeReasoningPromptSuffix is the prompt-level fallback for models that
+// don't support the "thinking" field's hard budget cap.
+const MinimizeReasoningPromptSuffix = minimizeReasoningPromptSuffix
+
+// MinThinkingBudgetTokens is Fireworks' live-verified floor for
+// thinking.budget_tokens (rejects anything lower with a 400) — confirmed
+// against both supported models before this const was added.
+const MinThinkingBudgetTokens = 1024
+
+func thinkingConfigForModel(model string, budgetTokens int) *thinkingConfig {
+	if !SupportsThinking(model) {
 		return nil
+	}
+	return &thinkingConfig{
+		Type:         "enabled",
+		BudgetTokens: budgetTokens,
 	}
 }

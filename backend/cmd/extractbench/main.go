@@ -29,9 +29,11 @@ import (
 	"share/backend/internal/config"
 	"share/backend/internal/extraction"
 	"share/backend/internal/extraction/baseline"
+	"share/backend/internal/extraction/deterministic"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
 	"share/backend/internal/llm/openai"
+	"share/backend/internal/llm/openaicompat"
 )
 
 type expectedEntry struct {
@@ -39,7 +41,7 @@ type expectedEntry struct {
 }
 
 func main() {
-	strategyFlag := flag.String("strategy", "baseline", "extraction strategy to run (baseline, ...)")
+	strategyFlag := flag.String("strategy", "baseline", "extraction strategy to run (baseline, deterministic_check)")
 	dirFlag := flag.String("dir", "testdata/receipts", "directory of receipt image files to run against")
 	flag.Parse()
 
@@ -62,6 +64,9 @@ func main() {
 	switch *strategyFlag {
 	case "baseline":
 		strategy = baseline.New(llmProvider, cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+	case "deterministic_check":
+		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
+		strategy = deterministic.New(llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
 	default:
 		log.Fatalf("unknown -strategy %q", *strategyFlag)
 	}
