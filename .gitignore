@@ -6,6 +6,10 @@ secrets/
 uploads/
 /pgdata/
 
+# real receipt photos used by extractbench — never in a public repo history
+backend/testdata/receipts/*.jpg
+backend/testdata/receipts/*.jpeg
+
 # go
 .go/
 backend/tmp/
