@@ -250,6 +250,70 @@ func TestExtractReceiptFeedbackSendsFullHistory(t *testing.T) {
 	}
 }
 
+func TestExtractReceiptToleratesFinishReasonLength(t *testing.T) {
+	// The extraction path must NOT error on finish_reason="length"; it logs
+	// and proceeds with whatever tool-call JSON it got.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []responseChoice{{
+				Message: responseMessage{
+					ToolCalls: []responseToolCall{{
+						ID:       "call_len",
+						Function: toolCallFunction{Name: extractFunctionName, Arguments: `{"items":[]}`},
+					}},
+				},
+				FinishReason: "length",
+			}},
+			Usage: responseUsage{PromptTokens: 100, CompletionTokens: 4000},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-key", "test-model")
+	_, err := c.ExtractReceipt(context.Background(), []byte("x"), "image/jpeg")
+	if err != nil {
+		t.Fatalf("ExtractReceipt must tolerate finish_reason=length: %v", err)
+	}
+}
+
+func TestExtractReceiptToleratesMultipleToolCalls(t *testing.T) {
+	// The extraction path must use the first tool call and ignore extras.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := chatResponse{
+			Choices: []responseChoice{{
+				Message: responseMessage{
+					ToolCalls: []responseToolCall{
+						{
+							ID:       "call_1",
+							Function: toolCallFunction{Name: extractFunctionName, Arguments: `{"items":[{"name":"First","priceCents":100,"quantity":1}],"subtotalCents":100}`},
+						},
+						{
+							ID:       "call_2",
+							Function: toolCallFunction{Name: extractFunctionName, Arguments: `{"items":[{"name":"Second","priceCents":200,"quantity":1}],"subtotalCents":200}`},
+						},
+					},
+				},
+				FinishReason: "stop",
+			}},
+			Usage: responseUsage{PromptTokens: 100, CompletionTokens: 50},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	c := New(srv.URL, "test-key", "test-model")
+	result, err := c.ExtractReceipt(context.Background(), []byte("x"), "image/jpeg")
+	if err != nil {
+		t.Fatalf("ExtractReceipt must tolerate multiple tool calls: %v", err)
+	}
+	if len(result.Receipt.Items) != 1 || result.Receipt.Items[0].Name != "First" {
+		t.Fatalf("expected first tool call's data, got %+v", result.Receipt.Items)
+	}
+}
+
 func TestExtractReceiptUpstreamErrorStatus(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)

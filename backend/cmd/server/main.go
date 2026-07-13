@@ -19,6 +19,7 @@ import (
 	"share/backend/internal/extraction/baseline"
 	"share/backend/internal/extraction/deterministic"
 	"share/backend/internal/extraction/feedback"
+	"share/backend/internal/extraction/preprocess"
 	"share/backend/internal/httpapi"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
@@ -94,6 +95,8 @@ func main() {
 	case "feedback_retry":
 		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
 		extractor = feedback.New(llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+	case "image_preprocess":
+		extractor = preprocess.New(llmProvider, cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
 	case "ocr_first":
 		log.Fatalf("EXTRACTION_STRATEGY=ocr_first is experimental and only supported by extractbench (see cmd/extractbench)")
 	default:
@@ -129,7 +132,7 @@ func main() {
 		Handler:           router,
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      90 * time.Second, // covers the 60s LLM extraction call
+		WriteTimeout:      135 * time.Second, // covers a two-call extraction plus persistence/response overhead
 
 		IdleTimeout: 120 * time.Second,
 	}

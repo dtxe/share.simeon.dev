@@ -29,9 +29,13 @@ import (
 	"share/backend/internal/config"
 	"share/backend/internal/extraction"
 	"share/backend/internal/extraction/baseline"
+	"share/backend/internal/extraction/cropdetect"
 	"share/backend/internal/extraction/deterministic"
 	"share/backend/internal/extraction/feedback"
+	"share/backend/internal/extraction/imagecroppreprocess"
 	"share/backend/internal/extraction/ocrfirst"
+	"share/backend/internal/extraction/preprocess"
+	"share/backend/internal/imageprep"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
 	"share/backend/internal/llm/openai"
@@ -44,13 +48,23 @@ type expectedEntry struct {
 }
 
 func main() {
-	strategyFlag := flag.String("strategy", "baseline", "extraction strategy to run (baseline, deterministic_check, feedback_retry, ocr_first)")
+	strategyFlag := flag.String("strategy", "baseline", "extraction strategy to run (baseline, deterministic_check, feedback_retry, ocr_first, image_preprocess, image_crop_preprocess)")
 	dirFlag := flag.String("dir", "testdata/receipts", "directory of receipt image files to run against")
 	dumpOCRFlag := flag.Bool("dump-ocr", false, "print raw OCR text per file before structuring (ocr_first only)")
+	dumpCropsFlag := flag.String("dump-crops", "", "write cropped receipt artifacts to this directory (image_crop_preprocess only)")
 	flag.Parse()
 
 	if *dumpOCRFlag && *strategyFlag != "ocr_first" {
 		log.Fatalf("-dump-ocr is only valid with -strategy=ocr_first (got -strategy=%q)", *strategyFlag)
+	}
+	if *dumpCropsFlag != "" && *strategyFlag != "image_crop_preprocess" {
+		log.Fatalf("-dump-crops is only valid with -strategy=image_crop_preprocess (got -strategy=%q)", *strategyFlag)
+	}
+
+	if *dumpCropsFlag != "" {
+		if err := os.MkdirAll(*dumpCropsFlag, 0755); err != nil {
+			log.Fatalf("creating -dump-crops directory %q: %v", *dumpCropsFlag, err)
+		}
 	}
 
 	cfg, err := config.Load()
@@ -83,6 +97,32 @@ func main() {
 	case "ocr_first":
 		llmClient := openaicompat.New(cfg.LLMBaseURL, cfg.LLMAPIKey, cfg.LLMModel)
 		strategy = ocrfirst.New(ocrEngine, llmClient, llmProvider.Name(), cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+	case "image_preprocess":
+		strategy = preprocess.New(llmProvider, cfg.LLMModel, cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
+	case "image_crop_preprocess":
+		if cfg.CropLLMBaseURL == "" || cfg.CropLLMModel == "" || cfg.CropLLMAPIKey == "" {
+			log.Fatalf("image_crop_preprocess requires all of CROP_LLM_BASE_URL, CROP_LLM_MODEL, CROP_LLM_API_KEY to be set explicitly")
+		}
+		if cfg.CropLLMInputCostPer1KTokensCents <= 0 || cfg.CropLLMOutputCostPer1KTokensCents <= 0 {
+			log.Fatalf("image_crop_preprocess requires both CROP_LLM_INPUT_COST_PER_1K_TOKENS_CENTS and CROP_LLM_OUTPUT_COST_PER_1K_TOKENS_CENTS to be set to positive values")
+		}
+		cropClient := openaicompat.New(cfg.CropLLMBaseURL, cfg.CropLLMAPIKey, cfg.CropLLMModel)
+		thinkingBudget := 0
+		if openaicompat.SupportsThinking(cfg.CropLLMModel) {
+			thinkingBudget = openaicompat.MinThinkingBudgetTokens
+		}
+		detector := &imagecroppreprocess.RealDetector{
+			Client:         cropClient,
+			Model:          cfg.CropLLMModel,
+			ThinkingBudget: thinkingBudget,
+		}
+		strategy = imagecroppreprocess.New(
+			detector,
+			llmProvider.Name()+"_crop", cfg.CropLLMModel,
+			cfg.CropLLMInputCostPer1KTokensCents, cfg.CropLLMOutputCostPer1KTokensCents,
+			llmProvider, cfg.LLMModel,
+			cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents,
+		)
 	default:
 		log.Fatalf("unknown -strategy %q", *strategyFlag)
 	}
@@ -143,6 +183,37 @@ func main() {
 		if e, ok := expected[name]; ok {
 			d := result.Receipt.SubtotalCents - e.SubtotalCents
 			expectedDiff = fmt.Sprintf("%+d", d)
+		}
+
+		// Write cropped JPEG + detection metadata when -dump-crops is set.
+		if *dumpCropsFlag != "" && *strategyFlag == "image_crop_preprocess" {
+			dumpBase := filepath.Join(*dumpCropsFlag, strings.TrimSuffix(name, filepath.Ext(name)))
+			if len(result.Attempts) > 0 && len(result.Attempts[0].RawJSON) > 0 {
+				detJSON := result.Attempts[0].RawJSON
+				// Write detection JSON.
+				jsonPath := dumpBase + ".crop.json"
+				if err := os.WriteFile(jsonPath, detJSON, 0644); err != nil {
+					log.Printf("%s: writing crop JSON: %v", name, err)
+				}
+				// Unmarshal bounds and write cropped JPEG.
+				var detResult cropdetect.DetectionResult
+				if err := json.Unmarshal(detJSON, &detResult); err == nil {
+					cropped, err := imageprep.Crop(image, imageprep.CropBounds{
+						MinX: detResult.Bounds.MinX,
+						MinY: detResult.Bounds.MinY,
+						MaxX: detResult.Bounds.MaxX,
+						MaxY: detResult.Bounds.MaxY,
+					})
+					if err != nil {
+						log.Printf("%s: cropping for dump: %v", name, err)
+					} else {
+						jpgPath := dumpBase + ".crop.jpg"
+						if err := os.WriteFile(jpgPath, cropped, 0644); err != nil {
+							log.Printf("%s: writing cropped JPEG: %v", name, err)
+						}
+					}
+				}
+			}
 		}
 
 		var promptTok, completeTok, costCents int

@@ -303,11 +303,35 @@ func (c *Client) ExtractWithSchema(ctx context.Context, image []byte, mimeType, 
 	return raw, usage, err
 }
 
-// doExtract is the shared request/response plumbing (HTTP call, forced
-// tool-call decode, finish_reason:"length" handling) behind every extraction
-// call, single- or multi-turn — only the messages, schema, and thinking
-// budget differ between callers.
+// ExtractStructuredCall is ExtractWithSchema plus a configurable function
+// name, max_tokens, and strict-response validation. Callers that need a
+// different named tool (e.g. detect_receipt for crop-detection) or a shorter
+// generation budget use this. When strict is true, finish_reason:"length" and
+// responses with other than exactly one tool call are rejected as errors.
+// When strict is false, finish_reason:"length" is only logged and the first
+// tool call is used (extraction-path behavior). The maxTokens parameter is
+// the maximum completion tokens the model is allowed; pass 0 to use the
+// extraction default (4000).
+func (c *Client) ExtractStructuredCall(ctx context.Context, image []byte, mimeType, prompt, functionName string, schema map[string]any, thinkingBudgetTokens, maxTokens int, strict bool) (json.RawMessage, llm.Usage, error) {
+	if maxTokens <= 0 {
+		maxTokens = extractionMaxTokens
+	}
+	_, raw, usage, err := c.doExtractWithFunc(ctx, []chatMessage{buildUserMessage(prompt, image, mimeType)}, functionName, schema, thinkingBudgetTokens, maxTokens, strict)
+	return raw, usage, err
+}
+
+// doExtract calls doExtractWithFunc with the defaults; strict=false preserves
+// the existing lenient extraction behavior.
 func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema map[string]any, thinkingBudgetTokens int) (toolCallID string, args json.RawMessage, usage llm.Usage, err error) {
+	return c.doExtractWithFunc(ctx, messages, extractFunctionName, schema, thinkingBudgetTokens, extractionMaxTokens, false)
+}
+
+// doExtractWithFunc is the shared request/response plumbing (HTTP call, forced
+// tool-call decode, finish_reason:"length" handling) behind every structured
+// tool call, single- or multi-turn. The strict bool selects lenient
+// (extraction-path, false) or strict (crop-detection, true) validation of
+// finish_reason and tool-call count.
+func (c *Client) doExtractWithFunc(ctx context.Context, messages []chatMessage, functionName string, schema map[string]any, thinkingBudgetTokens, maxTokens int, strict bool) (toolCallID string, args json.RawMessage, usage llm.Usage, err error) {
 	reqBody := chatRequest{
 		Model:    c.Model,
 		Messages: messages,
@@ -315,17 +339,17 @@ func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema m
 			{
 				Type: "function",
 				Function: functionDef{
-					Name:       extractFunctionName,
+					Name:       functionName,
 					Parameters: schema,
 				},
 			},
 		},
 		ToolChoice: toolChoice{
 			Type:     "function",
-			Function: toolChoiceTarget{Name: extractFunctionName},
+			Function: toolChoiceTarget{Name: functionName},
 		},
 		Thinking:  thinkingConfigForModel(c.Model, thinkingBudgetTokens),
-		MaxTokens: extractionMaxTokens,
+		MaxTokens: maxTokens,
 	}
 
 	body, err := json.Marshal(reqBody)
@@ -377,17 +401,25 @@ func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema m
 	}
 
 	if chatResp.Choices[0].FinishReason == "length" {
+		if strict {
+			return "", nil, usage, fmt.Errorf("openaicompat: truncated at max_tokens with finish_reason=length (model=%s, completion_tokens=%d, thinking_budget=%d)",
+				c.Model, chatResp.Usage.CompletionTokens, thinkingBudgetTokens)
+		}
 		log.Printf("llm: extraction truncated at max_tokens (model=%s, completion_tokens=%d, reasoning_budget=%d) — tool-call JSON may be incomplete",
 			c.Model, chatResp.Usage.CompletionTokens, thinkingBudgetTokens)
 	}
 
 	msg := chatResp.Choices[0].Message
-	if len(msg.ToolCalls) == 0 {
+	if strict {
+		if len(msg.ToolCalls) != 1 {
+			return "", nil, usage, fmt.Errorf("openaicompat: model returned %d tool calls, want exactly 1 (content: %s)", len(msg.ToolCalls), msg.Content)
+		}
+	} else if len(msg.ToolCalls) == 0 {
 		return "", nil, usage, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", msg.Content)
 	}
 	call := msg.ToolCalls[0]
-	if call.Function.Name != extractFunctionName {
-		return "", nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
+	if call.Function.Name != functionName {
+		return "", nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q, want %q", call.Function.Name, functionName)
 	}
 	id := call.ID
 	if id == "" {

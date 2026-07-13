@@ -70,6 +70,16 @@ type Config struct {
 
 	ExtractionStrategy string
 
+	// CROP_LLM_* configure the separate VLM used for receipt-boundary
+	// detection (image_crop_preprocess strategy, bench-only). All five must
+	// be explicitly set when using that strategy; they remain empty/zero
+	// otherwise so the server is never affected. See .env.example for usage.
+	CropLLMBaseURL                    string
+	CropLLMModel                      string
+	CropLLMAPIKey                     string
+	CropLLMInputCostPer1KTokensCents  float64
+	CropLLMOutputCostPer1KTokensCents float64
+
 	UploadDir string
 
 	Debug bool
@@ -149,6 +159,12 @@ func Load() (*Config, error) {
 		LLMMaxSpendPerReceiptCents: getInt("LLM_MAX_SPEND_PER_RECEIPT_CENTS", 5),
 
 		ExtractionStrategy: getEnv("EXTRACTION_STRATEGY", "baseline"),
+
+		CropLLMBaseURL:                    getEnv("CROP_LLM_BASE_URL", ""),
+		CropLLMModel:                      getEnv("CROP_LLM_MODEL", ""),
+		CropLLMAPIKey:                     getEnv("CROP_LLM_API_KEY", ""),
+		CropLLMInputCostPer1KTokensCents:  getEnvFloat("CROP_LLM_INPUT_COST_PER_1K_TOKENS_CENTS", 0),
+		CropLLMOutputCostPer1KTokensCents: getEnvFloat("CROP_LLM_OUTPUT_COST_PER_1K_TOKENS_CENTS", 0),
 
 		UploadDir: getEnv("UPLOAD_DIR", "/data/uploads"),
 
@@ -264,4 +280,16 @@ func getOptionalFloat(key string) (float64, bool) {
 		log.Fatalf("config: %s: invalid float %q: %v", key, v, err)
 	}
 	return f, true
+}
+
+func getEnvFloat(key string, def float64) float64 {
+	v := getEnv(key, "")
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		log.Fatalf("config: %s: invalid float %q: %v", key, v, err)
+	}
+	return f
 }
