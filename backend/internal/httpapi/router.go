@@ -39,6 +39,10 @@ func NewRouter(s *Server) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
+	// Caddy's forward_auth subrequest endpoint is intentionally outside all
+	// Identify, CSRF, and rate-limit middleware. It only authorizes GET/HEAD
+	// receipt fetches and never provisions identity.
+	r.Method(http.MethodGet, "/internal/receipts/authorize", http.HandlerFunc(s.handleReceiptAuthorization))
 
 	r.Route("/api", func(api chi.Router) {
 		// CSRF defense-in-depth: SameSite=Lax cookies alone aren't
@@ -84,6 +88,7 @@ func NewRouter(s *Server) http.Handler {
 
 		api.Post("/sessions/{id}/receipt", s.handleUploadReceipt)
 		api.Get("/sessions/{id}/receipt", s.handleGetReceipt)
+		api.Head("/sessions/{id}/receipt", s.handleGetReceipt)
 		api.Post("/sessions/{id}/extract", s.handleExtract)
 	})
 
@@ -93,6 +98,7 @@ func NewRouter(s *Server) http.Handler {
 	r.Route("/api/view", func(pub chi.Router) {
 		pub.Get("/{token}", s.handlePublicView)
 		pub.Get("/{token}/receipt", s.handlePublicReceipt)
+		pub.Head("/{token}/receipt", s.handlePublicReceipt)
 	})
 
 	return r

@@ -10,6 +10,7 @@
 		Strict-Transport-Security "max-age=31536000; includeSubDomains"
 		Content-Security-Policy "default-src 'self'; img-src 'self' data:; script-src 'self'; style-src 'self' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'"
 		Permissions-Policy "camera=(), microphone=(), geolocation=()"
+		Referrer-Policy "no-referrer"
 		X-Content-Type-Options "nosniff"
 	}
 
@@ -19,6 +20,67 @@
 	# regardless of how they're written below, so without explicit handle
 	# blocks, try_files would silently rewrite /api/* requests to
 	# /index.html before reverse_proxy ever got a chance to match them.
+	# Receipt bytes live in a private bucket. Only these exact public URLs are
+	# intercepted; all other API traffic retains the backend fallback above.
+	@privateReceipt {
+		method GET HEAD
+		path_regexp ^/api/(sessions/[^/]+|view/[^/]+)/receipt$
+	}
+	handle @privateReceipt {
+		route {
+			forward_auth backend:8080 {
+				uri /internal/receipts/authorize
+				copy_headers X-Share-S3-URI
+			}
+			# forward_auth overwrites this header from the auth response. Rewrite is
+			# intentionally after auth, so a client cannot choose an object key.
+			rewrite * {http.request.header.X-Share-S3-URI}
+			reverse_proxy https://share-app.s3.bhs.io.cloud.ovh.net {
+				header_up Host share-app.s3.bhs.io.cloud.ovh.net
+				header_up -Cookie
+				header_up -Authorization
+				header_up -X-Anon-Session-Token
+				header_up -X-Requested-With
+				header_up -X-Share-S3-URI
+				header_up -Origin
+				header_up -Referer
+				header_up -X-Forwarded-For
+				header_up -X-Forwarded-Host
+				header_up -X-Forwarded-Proto
+				header_up -X-Forwarded-Method
+				header_up -X-Forwarded-Uri
+				@privateS3Missing {
+					status 404
+				}
+				@privateS3Precondition {
+					status 412
+				}
+				@privateS3Range {
+					status 416
+				}
+				@privateS3OtherErrors {
+					status 300 301 302 303 305 307 308 400 401 403 405 409 410 411 429 500 501 502 503 504
+				}
+				handle_response @privateS3Missing {
+					header -Location -Content-Type -Content-Length
+					respond "receipt unavailable" 404
+				}
+				handle_response @privateS3Precondition {
+					header -Location -Content-Type -Content-Length
+					respond "" 412
+				}
+				handle_response @privateS3Range {
+					header -Location -Content-Type -Content-Length
+					respond "" 416
+				}
+				handle_response @privateS3OtherErrors {
+					header -Location -Content-Type -Content-Length
+					respond "receipt unavailable" 502
+				}
+			}
+		}
+	}
+
 	handle /api/* {
 		reverse_proxy backend:8080
 	}

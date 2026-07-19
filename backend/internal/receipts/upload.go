@@ -37,6 +37,10 @@ type ReceiptStorage interface {
 	Open(context.Context, string) (io.ReadCloser, error)
 	Delete(context.Context, string) error
 	Compress(context.Context, string) (int, int, error)
+}
+
+// Presigner is the capability used by the private S3 proxy authorizer.
+type Presigner interface {
 	PresignGet(context.Context, string, time.Duration) (string, error)
 	PresignHead(context.Context, string, time.Duration) (string, error)
 }
@@ -122,13 +126,6 @@ func (s *LocalStorage) Delete(ctx context.Context, relPath string) error {
 	}
 	_ = os.Remove(filepath.Dir(full)) // no-op if not empty
 	return nil
-}
-
-func (s *LocalStorage) PresignGet(context.Context, string, time.Duration) (string, error) {
-	return "", fmt.Errorf("receipts: presigning unsupported by local storage")
-}
-func (s *LocalStorage) PresignHead(context.Context, string, time.Duration) (string, error) {
-	return "", fmt.Errorf("receipts: presigning unsupported by local storage")
 }
 
 // NormalizePath validates the persisted path and returns its slash-normalized form.

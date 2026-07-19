@@ -15,6 +15,7 @@ type Config struct {
 	ReceiptStorage                           string
 	S3Credentials                            S3Credentials
 	S3Endpoint, S3Bucket, S3Region, S3Prefix string
+	S3ProxyHost                              string
 	S3VirtualHost                            bool
 	HTTPAddr                                 string
 	PublicBaseURL                            string
@@ -135,6 +136,7 @@ func Load() (*Config, error) {
 		S3Bucket:          getEnv("S3_BUCKET", "share-app"),
 		S3Region:          getEnv("S3_REGION", "bhs"),
 		S3Prefix:          getEnv("S3_PREFIX", "receipts"),
+		S3ProxyHost:       getEnv("S3_PROXY_HOST", "share-app.s3.bhs.io.cloud.ovh.net"),
 		S3VirtualHost:     getBool("S3_VIRTUAL_HOST", true),
 		HTTPAddr:          getEnv("HTTP_ADDR", ":8080"),
 		PublicBaseURL:     getEnv("PUBLIC_BASE_URL", "http://localhost:5173"),
@@ -196,12 +198,15 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("RECEIPT_STORAGE must be 's3' or 'local', got %q", cfg.ReceiptStorage)
 	}
 	if cfg.ReceiptStorage == "s3" {
-		if cfg.S3Endpoint == "" || cfg.S3Bucket == "" || cfg.S3Region == "" {
-			return nil, fmt.Errorf("S3_ENDPOINT, S3_BUCKET, and S3_REGION are required when RECEIPT_STORAGE=s3")
+		if cfg.S3Endpoint == "" || cfg.S3Bucket == "" || cfg.S3Region == "" || cfg.S3ProxyHost == "" {
+			return nil, fmt.Errorf("S3_ENDPOINT, S3_BUCKET, S3_REGION, and S3_PROXY_HOST are required when RECEIPT_STORAGE=s3")
 		}
 		endpoint, err := url.Parse(cfg.S3Endpoint)
 		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
 			return nil, fmt.Errorf("S3_ENDPOINT must be an absolute HTTPS URL")
+		}
+		if strings.ContainsAny(cfg.S3ProxyHost, "/?#@: \t\r\n") {
+			return nil, fmt.Errorf("S3_PROXY_HOST must be a hostname without scheme, port, or path")
 		}
 		cfg.S3Credentials, err = ParseS3Credentials(getEnv("S3_CREDENTIALS", ""))
 		if err != nil {

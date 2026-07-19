@@ -8,6 +8,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -22,6 +23,103 @@ import (
 )
 
 const maxExtractPerSession = 5
+
+const receiptPresignTTL = 45 * time.Second
+
+// parseReceiptURI accepts only the two public receipt URL shapes. Queries are
+// deliberately rejected: the object key always comes from the authorized DB
+// row, never from a client-controlled value.
+func parseReceiptURI(raw string) (ownerID, viewToken string, ok bool) {
+	u, err := url.ParseRequestURI(raw)
+	if err != nil || u.RawQuery != "" || u.Fragment != "" {
+		return "", "", false
+	}
+	const ownerPrefix = "/api/sessions/"
+	const viewPrefix = "/api/view/"
+	if strings.HasSuffix(u.Path, "/receipt") {
+		id := strings.TrimSuffix(strings.TrimPrefix(u.Path, ownerPrefix), "/receipt")
+		if strings.HasPrefix(u.Path, ownerPrefix) && id != "" && !strings.Contains(id, "/") {
+			return id, "", true
+		}
+		token := strings.TrimSuffix(strings.TrimPrefix(u.Path, viewPrefix), "/receipt")
+		if strings.HasPrefix(u.Path, viewPrefix) && token != "" && !strings.Contains(token, "/") {
+			return "", token, true
+		}
+	}
+	return "", "", false
+}
+
+func validS3ProxyURI(raw, expectedHost string) (string, bool) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "https" || u.Hostname() != expectedHost || u.Port() != "" || u.Path == "" {
+		return "", false
+	}
+	return u.RequestURI(), true
+}
+
+func receiptMethodAllowed(method string) bool {
+	return method == http.MethodGet || method == http.MethodHead
+}
+
+func (s *Server) handleReceiptAuthorization(w http.ResponseWriter, r *http.Request) {
+	if !receiptMethodAllowed(r.Header.Get("X-Forwarded-Method")) {
+		receiptAuthFailure(w)
+		return
+	}
+	ownerID, token, ok := parseReceiptURI(r.Header.Get("X-Forwarded-Uri"))
+	if !ok {
+		receiptAuthFailure(w)
+		return
+	}
+	var sess *store.BillSession
+	var err error
+	if ownerID != "" {
+		userID, authErr := s.Auth.ExistingUserID(r.Context(), r)
+		if authErr != nil {
+			receiptAuthFailure(w)
+			return
+		}
+		sess, err = s.Store.GetSession(r.Context(), ownerID, userID)
+	} else {
+		sess, err = s.Store.GetByViewToken(r.Context(), token)
+	}
+	if err != nil || sess.ReceiptImagePath == nil {
+		receiptAuthFailure(w)
+		return
+	}
+	presigner, ok := s.Receipts.(receipts.Presigner)
+	if !ok {
+		log.Printf("receipt authorization: presigning unavailable")
+		receiptAuthFailure(w)
+		return
+	}
+	var signed string
+	if r.Header.Get("X-Forwarded-Method") == http.MethodHead {
+		signed, err = presigner.PresignHead(r.Context(), *sess.ReceiptImagePath, receiptPresignTTL)
+	} else {
+		signed, err = presigner.PresignGet(r.Context(), *sess.ReceiptImagePath, receiptPresignTTL)
+	}
+	uri, valid := validS3ProxyURI(signed, s.Cfg.S3ProxyHost)
+	if err != nil {
+		log.Printf("receipt authorization: presign failed")
+		receiptAuthFailure(w)
+		return
+	}
+	if !valid {
+		log.Printf("receipt authorization: presign URL validation failed")
+		receiptAuthFailure(w)
+		return
+	}
+	w.Header().Set("X-Share-S3-URI", uri)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func receiptAuthFailure(w http.ResponseWriter) {
+	// One deliberately boring response for malformed, unauthorized, missing,
+	// and unavailable receipts; it must not become a bill/key oracle.
+	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+	w.WriteHeader(http.StatusNotFound)
+}
 
 func (s *Server) handleUploadReceipt(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUser(w, r)

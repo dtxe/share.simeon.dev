@@ -180,6 +180,22 @@ func (m *Manager) Logout(ctx context.Context, w http.ResponseWriter, r *http.Req
 	}
 }
 
+// ExistingUserID resolves only an already valid identity. Unlike Identify it
+// never provisions an anonymous user or session, which is important for
+// authorization subrequests made for receipt images.
+func (m *Manager) ExistingUserID(ctx context.Context, r *http.Request) (string, error) {
+	raw, ok := m.readToken(r)
+	if !ok {
+		return "", ErrNoSession
+	}
+	sess, err := m.verify(ctx, raw)
+	if err != nil {
+		return "", err
+	}
+	m.touch(ctx, sess)
+	return sess.UserID, nil
+}
+
 func (m *Manager) readToken(r *http.Request) (string, bool) {
 	if m.cfg.AnonIdentityTransport == "header" {
 		v := r.Header.Get(m.cfg.AnonSessionHeaderName)
