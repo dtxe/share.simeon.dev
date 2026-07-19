@@ -32,6 +32,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `internal/store` — repository layer (CRUD for sessions/people/dishes/portions, share-token generation/lookup, `GetBreakdown` wiring into `internal/split`)
 - [x] `internal/split/calculate.go` — pure split math, integer cents, largest-remainder rounding
 - [x] Unit tests: even split, uneven shares, zero-share/unassigned dish, rounding reconciliation — all passing (`go test ./internal/split/...`)
+- [x] Receipt tax model: nullable aggregate tax on sessions plus taxable/exempt dishes, with exact tax-aware allocation, unallocated-tax warnings, and legacy behavior when tax is unknown
 
 ## 4. Email OTP + merge
 - [x] `internal/email` — Provider interface + SMTP impl
@@ -65,6 +66,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `internal/llm/openai` — sibling impl proving swappability (both are ~15-line wrappers around `openaicompat.Client`)
 - [x] Unit tests against a mocked HTTP server (request shape, auth header, response parsing, non-200 handling, unknown-field rejection) — all passing
 - [x] Manual curl smoke test against a real receipt photo — completed with the live Fireworks key from docker secrets; extraction returned structured JSON for a real receipt image
+- [x] Tax extraction and deterministic verification: aggregate printed tax lines, conservative item exemption markers, subtotal/tax/grand-total reconciliation, bounded feedback retry, and best-attempt selection; mixed visible rates are flagged as approximate
 
 ## 8. Receipt upload pipeline
 - [x] `internal/receipts` — size cap, magic-byte sniff, decompression-bomb guard, re-encode to JPEG q80 (strips EXIF/GPS)
@@ -98,9 +100,11 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] Extraction loading motion: spinner next to "Reading your receipt…" plus shimmer placeholder rows while the LLM parses and no dishes have landed yet.
 - [x] People section: bulk paste one name per line, inline rename/delete, confirmation before deleting a person with existing portions.
 - [x] Total paid section: inline input (not a drawer), subtotal default action, receipt-derived value hint, and tax/tip delta caption.
+- [x] Tax controls: compact editable aggregate Tax field, per-item Tax checkbox, null-versus-zero handling, and a current-session warning for mixed-rate extraction
 - [x] Assignment section: segmented **By item** / **By person** modes over one shared shares map. By item expands a dish to per-person steppers and a "Split evenly" action; by person expands a person to per-dish steppers.
 - [x] Exit gate warning on unassigned dishes (offers to split remainder evenly)
 - [x] `Settle` screen (`/bill/:id/settle`): title editing, receipt-style subtotal/tax-tip/total summary, `PersonBreakdownCard` accordions, receipt thumbnail, fixed Edit/Create share actions, and `ShareLinkDrawer`.
+- [x] Owner and public results show Tax separately when known, reconcile per-person tax and adjustments to each total, and warn about incomplete or unallocated tax
 
 ## 12. Receipt + share end-to-end
 - [x] Receipt/items section wired to `POST /sessions/:id/extract`; graceful failure path tested live (no API key configured)
