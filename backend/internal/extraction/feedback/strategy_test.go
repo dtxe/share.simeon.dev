@@ -8,6 +8,8 @@ import (
 	"strings"
 	"testing"
 
+	"share/backend/internal/extraction"
+	"share/backend/internal/llm"
 	"share/backend/internal/llm/openaicompat"
 )
 
@@ -56,6 +58,75 @@ func TestRunSkipsRetryWhenSubtotalMatches(t *testing.T) {
 	}
 	if result.SubtotalMatched == nil || !*result.SubtotalMatched {
 		t.Fatalf("SubtotalMatched = %v, want true", result.SubtotalMatched)
+	}
+}
+
+func TestRunSkipsRetryWhenEverythingIsUnverified(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		writeToolCallResponse(w, "call_1", `{"items":[{"name":"item","priceCents":100,"quantity":1}]}`)
+	}))
+	defer srv.Close()
+	client := openaicompat.New(srv.URL, "test-key", fakeMinimaxModel)
+	result, err := New(client, "test", fakeMinimaxModel, 1, 1).Run(context.Background(), nil, "image/jpeg")
+	if err != nil || calls != 1 || len(result.Attempts) != 1 || result.Reconciliation.FailedChecks != 0 {
+		t.Fatalf("unverified result should not retry: calls=%d err=%v result=%+v", calls, err, result)
+	}
+}
+
+func TestRunRetriesOnTaxAndGrandTotalMismatches(t *testing.T) {
+	for _, tc := range []struct {
+		name, first string
+	}{
+		{"tax", `{"items":[{"name":"item","priceCents":1000,"quantity":1}],"subtotalCents":1000,"taxCents":50,"taxRateBasisPoints":1000,"tipKnown":true,"totalPaidCents":1050}`},
+		{"grand total", `{"items":[{"name":"item","priceCents":1000,"quantity":1}],"subtotalCents":1000,"taxCents":100,"tipKnown":true,"totalPaidCents":1050}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var calls int
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				calls++
+				writeToolCallResponse(w, "call", tc.first)
+			}))
+			defer srv.Close()
+			client := openaicompat.New(srv.URL, "test-key", fakeMinimaxModel)
+			result, err := New(client, "test", fakeMinimaxModel, 1, 1).Run(context.Background(), nil, "image/jpeg")
+			if err != nil || calls != 2 || len(result.Attempts) != 2 {
+				t.Fatalf("mismatch should retry: calls=%d err=%v attempts=%d", calls, err, len(result.Attempts))
+			}
+		})
+	}
+}
+
+func TestBetterRetainsFirstOnTieAndSelectsOnlyStrictlyBetter(t *testing.T) {
+	a := extraction.Reconciliation{FailedChecks: 1, AggregateAbsDifferenceCents: 10}
+	if better(a, a) {
+		t.Fatal("equal reconciliation scores must not be considered better")
+	}
+	if !better(extraction.Reconciliation{}, a) {
+		t.Fatal("fewer failed checks should be better")
+	}
+}
+
+func TestRunRetainsFirstAttemptOnExactTie(t *testing.T) {
+	var calls int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		writeToolCallResponse(w, "call", `{"items":[{"name":"same","priceCents":1200,"quantity":2}],"subtotalCents":1200}`)
+	}))
+	defer srv.Close()
+	client := openaicompat.New(srv.URL, "test-key", fakeMinimaxModel)
+	result, err := New(client, "test", fakeMinimaxModel, 1, 1).Run(context.Background(), nil, "image/jpeg")
+	if err != nil || calls != 2 || result.Receipt.Items[0].Name != "same" {
+		t.Fatalf("expected retry with first retained on tie: calls=%d err=%v receipt=%+v", calls, err, result.Receipt)
+	}
+}
+
+func TestMismatchFeedbackOnlyReportsCheckedMismatches(t *testing.T) {
+	rec := extraction.Reconciliation{}
+	text := mismatchFeedback(rec, llm.ExtractedReceipt{})
+	if strings.Contains(text, "items sum") || strings.Contains(text, "differs from the total") {
+		t.Fatalf("unchecked mismatches leaked into feedback: %q", text)
 	}
 }
 

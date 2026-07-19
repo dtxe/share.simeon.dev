@@ -27,6 +27,7 @@ type Attempt struct {
 	Err               error  // non-nil if this attempt failed
 	SubtotalMatched   *bool
 	SubtotalDiffCents *int64
+	Reconciliation    Reconciliation
 }
 
 type RunResult struct {
@@ -34,6 +35,7 @@ type RunResult struct {
 	Attempts          []Attempt
 	SubtotalMatched   *bool
 	SubtotalDiffCents *int64
+	Reconciliation    Reconciliation
 }
 
 type Strategy interface {

@@ -48,7 +48,7 @@ func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (extr
 	costCents := extraction.EstimateCostCents(result.Usage.PromptTokens, result.Usage.CompletionTokens, s.InputCostPer1KTokensCents, s.OutputCostPer1KTokensCents)
 	rawJSON, _ := json.Marshal(result.Receipt)
 
-	matched, diffCents := extraction.CheckSubtotal(result.Receipt.Items, result.Receipt.SubtotalCents)
+	reconciliation := extraction.Reconcile(&result.Receipt)
 
 	return extraction.RunResult{
 		Receipt: result.Receipt,
@@ -60,11 +60,28 @@ func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (extr
 				CompleteTok:       result.Usage.CompletionTokens,
 				CostCents:         &costCents,
 				RawJSON:           rawJSON,
-				SubtotalMatched:   &matched,
-				SubtotalDiffCents: &diffCents,
+				SubtotalMatched:   subtotalMatchedPtr(reconciliation),
+				SubtotalDiffCents: subtotalDiffPtr(reconciliation),
+				Reconciliation:    reconciliation,
 			},
 		},
-		SubtotalMatched:   &matched,
-		SubtotalDiffCents: &diffCents,
+		SubtotalMatched:   subtotalMatchedPtr(reconciliation),
+		SubtotalDiffCents: subtotalDiffPtr(reconciliation),
+		Reconciliation:    reconciliation,
 	}, nil
+}
+
+func subtotalMatchedPtr(r extraction.Reconciliation) *bool {
+	if !r.ItemSubtotalChecked {
+		return nil
+	}
+	v := r.ItemSubtotalMatched
+	return &v
+}
+func subtotalDiffPtr(r extraction.Reconciliation) *int64 {
+	if !r.ItemSubtotalChecked {
+		return nil
+	}
+	v := r.ItemSubtotalDiffCents
+	return &v
 }

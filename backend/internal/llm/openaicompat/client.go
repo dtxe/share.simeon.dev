@@ -20,14 +20,24 @@ import (
 	"share/backend/internal/llm"
 )
 
-const extractionPrompt = `You are extracting structured data from a photo of a restaurant receipt.
+const extractionPrompt = `You are extracting structured data from a photo of a receipt.
 Return the restaurant name, the date (ISO 8601, best effort), and every line item with its name,
 unit price in integer cents (priceCents is the price for a single item, not the line total), and
 quantity. Also return, in integer cents: the pre-tax subtotal (subtotalCents), any tip/gratuity
 amount (tipCents), and the final total actually charged including tax and tip (totalPaidCents) —
 prefer a credit-card/charged-amount line for totalPaidCents when one is printed. Only include
 amounts clearly printed on the receipt; if a field can't be determined, omit it rather than guessing
-wildly.
+wildly. Aggregate every printed tax line into taxCents. Report tipKnown=true and tipCents=0 when
+the receipt clearly shows no tip; otherwise tipKnown must be false or omitted. Report
+hasNonTaxAdjustments=true when deposits, fees, surcharges, discounts, or similar non-tax lines
+affect the total, and false only when you can reliably tell they do not. Report
+multipleTaxRatesDetected=true when distinct tax rates are visible. Recognize Canadian GST, HST, PST, QST and
+generic US state, local, county, city, district, meals, and sales tax terminology. Inspect the
+receipt's own item markers and legends (including symbols other than H); do not hardcode a symbol.
+Set an item's taxable field only when a reliable marker/legend convention exists, and classify all
+affected lines true or false. Otherwise omit it (omitted means taxable). Never call deposits, CRV, bottle returns, bag fees, service charges,
+delivery fees, discounts, or surcharges tax unless explicitly identified as tax. A printed rate may
+be returned as taxRateBasisPoints.
 Where a pre-tax subtotal is printed, verify that the sum of each item's priceCents times its
 quantity equals subtotalCents. If they don't match, re-read the item lines and the subtotal line and
 correct whichever was misread — the most common error is recording the line total (unit price times
@@ -156,11 +166,16 @@ type responseUsage struct {
 var extractionSchema = map[string]any{
 	"type": "object",
 	"properties": map[string]any{
-		"restaurantName": map[string]any{"type": "string"},
-		"date":           map[string]any{"type": "string"},
-		"subtotalCents":  map[string]any{"type": "integer"},
-		"tipCents":       map[string]any{"type": "integer"},
-		"totalPaidCents": map[string]any{"type": "integer"},
+		"restaurantName":           map[string]any{"type": "string"},
+		"date":                     map[string]any{"type": "string"},
+		"subtotalCents":            map[string]any{"type": "integer"},
+		"tipCents":                 map[string]any{"type": "integer"},
+		"totalPaidCents":           map[string]any{"type": "integer"},
+		"taxCents":                 map[string]any{"type": "integer"},
+		"taxRateBasisPoints":       map[string]any{"type": "integer"},
+		"tipKnown":                 map[string]any{"type": "boolean"},
+		"hasNonTaxAdjustments":     map[string]any{"type": "boolean"},
+		"multipleTaxRatesDetected": map[string]any{"type": "boolean"},
 		"items": map[string]any{
 			"type": "array",
 			"items": map[string]any{
@@ -169,12 +184,15 @@ var extractionSchema = map[string]any{
 					"name":       map[string]any{"type": "string"},
 					"priceCents": map[string]any{"type": "integer", "description": "per-item unit price in cents, not the line total"},
 					"quantity":   map[string]any{"type": "number"},
+					"taxable":    map[string]any{"type": "boolean"},
 				},
-				"required": []string{"name", "priceCents", "quantity"},
+				"required":             []string{"name", "priceCents", "quantity"},
+				"additionalProperties": false,
 			},
 		},
 	},
-	"required": []string{"items"},
+	"required":             []string{"items", "tipKnown", "hasNonTaxAdjustments", "multipleTaxRatesDetected"},
+	"additionalProperties": false,
 }
 
 func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType string) (*llm.Result, error) {
@@ -260,6 +278,7 @@ func decodeReceipt(raw json.RawMessage) (llm.ExtractedReceipt, error) {
 	if err := dec.Decode(&receipt); err != nil {
 		return llm.ExtractedReceipt{}, fmt.Errorf("openaicompat: decoding extracted receipt tool call arguments: %w (raw arguments: %s)", err, raw)
 	}
+	receipt.NormalizeTaxable()
 	return receipt, nil
 }
 

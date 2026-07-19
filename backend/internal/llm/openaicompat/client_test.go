@@ -75,8 +75,42 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 	if len(result.Receipt.Items) != 1 || result.Receipt.Items[0].Name != "Pad Thai" || result.Receipt.Items[0].PriceCents != 1200 {
 		t.Errorf("unexpected items: %+v", result.Receipt.Items)
 	}
+	if result.Receipt.Items[0].Taxable == nil || !*result.Receipt.Items[0].Taxable {
+		t.Fatal("omitted taxable marker should normalize true")
+	}
 	if result.Usage.PromptTokens != 500 || result.Usage.CompletionTokens != 80 {
 		t.Errorf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestExtractionSchemaAndPromptTaxContract(t *testing.T) {
+	props := extractionSchema["properties"].(map[string]any)
+	for _, name := range []string{"taxCents", "taxRateBasisPoints", "tipKnown", "hasNonTaxAdjustments", "multipleTaxRatesDetected"} {
+		if _, ok := props[name]; !ok {
+			t.Fatalf("schema missing %s", name)
+		}
+	}
+	required := extractionSchema["required"].([]string)
+	for _, name := range []string{"items", "tipKnown", "hasNonTaxAdjustments", "multipleTaxRatesDetected"} {
+		found := false
+		for _, got := range required {
+			if got == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("schema required fields missing %s", name)
+		}
+	}
+	itemProps := props["items"].(map[string]any)["items"].(map[string]any)["properties"].(map[string]any)
+	if _, ok := itemProps["taxable"]; !ok {
+		t.Fatal("schema missing item taxable")
+	}
+	for _, term := range []string{"GST", "HST", "PST", "QST", "county", "service charges", "CRV"} {
+		if !strings.Contains(extractionPrompt, term) {
+			t.Fatalf("prompt missing tax guidance %q", term)
+		}
 	}
 }
 
