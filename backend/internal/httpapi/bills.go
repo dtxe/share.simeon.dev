@@ -137,11 +137,32 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type updateSessionBody struct {
-	Title          *string    `json:"title"`
-	RestaurantName *string    `json:"restaurantName"`
-	BillDate       *time.Time `json:"billDate"`
-	TotalPaidCents *int64     `json:"totalPaidCents"`
-	TaxCents       *int64     `json:"taxCents"`
+	Title          *string       `json:"title"`
+	RestaurantName *string       `json:"restaurantName"`
+	BillDate       *time.Time    `json:"billDate"`
+	TotalPaidCents *int64        `json:"totalPaidCents"`
+	TaxCents       optionalInt64 `json:"taxCents"`
+}
+
+// optionalInt64 distinguishes an omitted PATCH field from an explicit JSON
+// null, allowing the editor to clear a previously known tax amount.
+type optionalInt64 struct {
+	Present bool
+	Value   *int64
+}
+
+func (o *optionalInt64) UnmarshalJSON(data []byte) error {
+	o.Present = true
+	if string(data) == "null" {
+		o.Value = nil
+		return nil
+	}
+	var value int64
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	o.Value = &value
+	return nil
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
@@ -162,7 +183,7 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "totalPaidCents out of range")
 		return
 	}
-	if body.TaxCents != nil && (*body.TaxCents < 0 || *body.TaxCents > 500_000_000) {
+	if body.TaxCents.Value != nil && (*body.TaxCents.Value < 0 || *body.TaxCents.Value > 500_000_000) {
 		writeJSONError(w, http.StatusBadRequest, "taxCents out of range")
 		return
 	}
@@ -176,7 +197,8 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		RestaurantName: body.RestaurantName,
 		BillDate:       body.BillDate,
 		TotalPaidCents: body.TotalPaidCents,
-		TaxCents:       body.TaxCents,
+		TaxCents:       body.TaxCents.Value,
+		ClearTaxCents:  body.TaxCents.Present && body.TaxCents.Value == nil,
 	})
 	if err != nil {
 		storeErrToStatus(w, err)

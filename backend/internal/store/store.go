@@ -142,6 +142,7 @@ type SessionPatch struct {
 	BillDate       *time.Time
 	TotalPaidCents *int64
 	TaxCents       *int64
+	ClearTaxCents  bool
 }
 
 // UpdateSession applies whichever fields are non-nil in patch. Bumps
@@ -153,11 +154,11 @@ func (s *Store) UpdateSession(ctx context.Context, id, ownerUserID string, patch
 		    restaurant_name = COALESCE($4, restaurant_name),
 		    bill_date = COALESCE($5, bill_date),
 		    total_paid_cents = COALESCE($6, total_paid_cents),
-		    tax_cents = COALESCE($7, tax_cents),
+		    tax_cents = CASE WHEN $8 THEN NULL ELSE COALESCE($7, tax_cents) END,
 		    updated_at = now(),
 		    expires_at = now() + interval '60 days'
 		WHERE id = $1 AND owner_user_id = $2
-	`, id, ownerUserID, patch.Title, patch.RestaurantName, patch.BillDate, patch.TotalPaidCents, patch.TaxCents)
+	`, id, ownerUserID, patch.Title, patch.RestaurantName, patch.BillDate, patch.TotalPaidCents, patch.TaxCents, patch.ClearTaxCents)
 	if err != nil {
 		return err
 	}
