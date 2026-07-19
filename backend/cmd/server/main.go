@@ -10,6 +10,10 @@ import (
 	"syscall"
 	"time"
 
+	awsconfig "github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
+	"github.com/aws/aws-sdk-go-v2/service/s3"
+
 	"share/backend/internal/auth"
 	"share/backend/internal/cleanup"
 	"share/backend/internal/config"
@@ -101,7 +105,23 @@ func main() {
 			extractor.Name(), extractor.MaxCalls()*extraction.ReservationCentsPerCall, cfg.LLMMaxSpendPerReceiptCents)
 	}
 	st := store.New(pool)
-	rs := receipts.New(cfg.UploadDir)
+	var rs receipts.ReceiptStorage
+	if cfg.ReceiptStorage == "local" {
+		rs = receipts.New(cfg.UploadDir)
+	} else {
+		awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
+			awsconfig.WithRegion(cfg.S3Region),
+			awsconfig.WithCredentialsProvider(credentials.NewStaticCredentialsProvider(
+				cfg.S3Credentials.AccessKey, cfg.S3Credentials.SecretKey, "",
+			)),
+			awsconfig.WithBaseEndpoint(cfg.S3Endpoint),
+		)
+		if err != nil {
+			log.Fatalf("s3 config: %v", err)
+		}
+		client := s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = !cfg.S3VirtualHost })
+		rs = receipts.NewS3(client, s3.NewPresignClient(client), cfg.S3Bucket, cfg.S3Prefix)
+	}
 
 	cleanupCtx, stopCleanup := context.WithCancel(ctx)
 	defer stopCleanup()

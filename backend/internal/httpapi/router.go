@@ -24,7 +24,7 @@ type Server struct {
 	RL        *ratelimit.Limiter
 	Extractor extraction.Strategy
 	Store     *store.Store
-	Receipts  *receipts.Storage
+	Receipts  receipts.ReceiptStorage
 }
 
 func NewRouter(s *Server) http.Handler {

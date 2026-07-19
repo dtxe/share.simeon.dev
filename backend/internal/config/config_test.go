@@ -102,10 +102,37 @@ func TestLoadRejectsNonPositiveReceiptSpendCap(t *testing.T) {
 	}
 }
 
+func TestParseS3CredentialsRequiresExactFields(t *testing.T) {
+	got, err := ParseS3Credentials(`{"userName":"u","accessKey":"a","secretKey":"s"}`)
+	if err != nil || got.AccessKey != "a" {
+		t.Fatalf("ParseS3Credentials = %#v, %v", got, err)
+	}
+	if _, err := ParseS3Credentials(`{"userName":"u","accessKey":"a"}`); err == nil {
+		t.Fatal("expected missing secretKey error")
+	}
+	if _, err := ParseS3Credentials(`{"userName":"u","accessKey":"a","secretKey":"s","extra":"x"}`); err == nil {
+		t.Fatal("expected unknown field error")
+	}
+	if _, err := ParseS3Credentials(`{"userName":"u","accessKey":"a","secretKey":"s"} {}`); err == nil {
+		t.Fatal("expected trailing JSON error")
+	}
+}
+
+func TestLoadRejectsInvalidS3Endpoint(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RECEIPT_STORAGE", "s3")
+	t.Setenv("S3_CREDENTIALS", `{"userName":"u","accessKey":"a","secretKey":"s"}`)
+	t.Setenv("S3_ENDPOINT", "http://localhost:9000")
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "absolute HTTPS") {
+		t.Fatalf("Load error = %v", err)
+	}
+}
+
 func setRequiredEnv(t *testing.T) {
 	t.Helper()
 
 	t.Setenv("DATABASE_URL", "postgres://share_app:password@localhost:5432/share?sslmode=disable")
+	t.Setenv("RECEIPT_STORAGE", "local")
 	t.Setenv("REDIS_URL", "redis://localhost:6379/0")
 	t.Setenv("EMAIL_OTP_ENABLED", "false")
 	t.Setenv("LLM_MODEL", "")

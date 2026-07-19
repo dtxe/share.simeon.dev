@@ -1,6 +1,7 @@
 package receipts
 
 import (
+	"context"
 	"image"
 	"image/color"
 	"image/jpeg"
@@ -14,7 +15,7 @@ func TestCompressDownscalesLargeImage(t *testing.T) {
 	relPath := "session-a/receipt.jpg"
 	writeTestJPEG(t, filepath.Join(storage.Dir, relPath), 3000, 2500)
 
-	w, h, err := storage.Compress(relPath)
+	w, h, err := storage.Compress(context.Background(), relPath)
 	if err != nil {
 		t.Fatalf("Compress failed: %v", err)
 	}
@@ -32,7 +33,7 @@ func TestCompressReEncodesSmallImageWithoutUpscaling(t *testing.T) {
 	relPath := "session-b/receipt.jpg"
 	writeTestJPEG(t, filepath.Join(storage.Dir, relPath), 800, 600)
 
-	w, h, err := storage.Compress(relPath)
+	w, h, err := storage.Compress(context.Background(), relPath)
 	if err != nil {
 		t.Fatalf("Compress failed: %v", err)
 	}
@@ -45,7 +46,7 @@ func TestCompressReEncodesSmallImageWithoutUpscaling(t *testing.T) {
 
 func TestCompressMissingFile(t *testing.T) {
 	storage := New(t.TempDir())
-	_, _, err := storage.Compress("session-c/missing.jpg")
+	_, _, err := storage.Compress(context.Background(), "session-c/missing.jpg")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}
@@ -79,7 +80,7 @@ func writeTestJPEG(t testing.TB, path string, width, height int) {
 func verifyDecoded(t testing.TB, storage *Storage, relPath string, wantW, wantH int) {
 	t.Helper()
 
-	f, err := storage.Open(relPath)
+	f, err := storage.Open(context.Background(), relPath)
 	if err != nil {
 		t.Fatalf("opening compressed file: %v", err)
 	}

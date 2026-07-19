@@ -2,6 +2,7 @@ package receipts
 
 import (
 	"bytes"
+	"context"
 	"encoding/binary"
 	"hash/crc32"
 	"strings"
@@ -10,7 +11,7 @@ import (
 
 func TestSaveRejectsUploadOverByteLimit(t *testing.T) {
 	storage := New(t.TempDir())
-	_, err := storage.Save("session-id", bytes.NewReader(make([]byte, MaxUploadBytes+1)))
+	_, err := storage.Save(context.Background(), "session-id", bytes.NewReader(make([]byte, MaxUploadBytes+1)))
 	if err == nil {
 		t.Fatal("expected oversized upload to be rejected")
 	}
@@ -19,11 +20,23 @@ func TestSaveRejectsUploadOverByteLimit(t *testing.T) {
 	}
 }
 
+func TestNormalizePathRejectsTraversal(t *testing.T) {
+	for _, path := range []string{"../x.jpg", "session/../x.jpg", "/session/x.jpg", "session/x.png", "session/a/b.jpg"} {
+		if _, err := NormalizePath(path); err == nil {
+			t.Errorf("NormalizePath(%q) accepted unsafe path", path)
+		}
+	}
+	got, err := NormalizePath("session-id/random.jpg")
+	if err != nil || got != "session-id/random.jpg" {
+		t.Fatalf("NormalizePath = %q, %v", got, err)
+	}
+}
+
 func TestSaveRejectsImageOverPixelLimit(t *testing.T) {
 	storage := New(t.TempDir())
 	img := pngWithDimensions(MaxImagePixels+1, 1)
 
-	_, err := storage.Save("session-id", bytes.NewReader(img))
+	_, err := storage.Save(context.Background(), "session-id", bytes.NewReader(img))
 	if err == nil {
 		t.Fatal("expected oversized image dimensions to be rejected")
 	}
@@ -36,7 +49,7 @@ func TestSaveRejectsImageOverSideLimit(t *testing.T) {
 	storage := New(t.TempDir())
 	img := pngWithDimensions(MaxImageSide+1, 1)
 
-	_, err := storage.Save("session-id", bytes.NewReader(img))
+	_, err := storage.Save(context.Background(), "session-id", bytes.NewReader(img))
 	if err == nil {
 		t.Fatal("expected oversized image dimensions to be rejected")
 	}

@@ -40,11 +40,13 @@ services:
       OTP_HASH_PEPPER_FILE: /run/secrets/otp_hash_pepper
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
       SMTP_PASS_FILE: /run/secrets/smtp_pass
+      S3_CREDENTIALS_FILE: /run/secrets/s3_credentials
     secrets:
       - postgres_password
       - otp_hash_pepper
       - llm_api_key
       - smtp_pass
+      - s3_credentials
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,3 +83,5 @@ secrets:
     file: ./secrets/llm_api_key.txt
   smtp_pass:
     file: ./secrets/smtp_pass.txt
+  s3_credentials:
+    file: ./secrets/s3_credentials.json

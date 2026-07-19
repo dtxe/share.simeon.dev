@@ -15,7 +15,7 @@ import (
 const interval = 1 * time.Hour
 
 // Run blocks, sweeping immediately and then on every tick, until ctx is done.
-func Run(ctx context.Context, s *store.Store, rs *receipts.Storage) {
+func Run(ctx context.Context, s *store.Store, rs receipts.ReceiptStorage) {
 	sweep(ctx, s, rs)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
@@ -29,7 +29,7 @@ func Run(ctx context.Context, s *store.Store, rs *receipts.Storage) {
 	}
 }
 
-func sweep(ctx context.Context, s *store.Store, rs *receipts.Storage) {
+func sweep(ctx context.Context, s *store.Store, rs receipts.ReceiptStorage) {
 	if n, err := s.DeleteExpiredSessions(ctx); err != nil {
 		log.Printf("cleanup: sessions: %v", err)
 	} else if n > 0 {
@@ -55,7 +55,7 @@ func sweep(ctx context.Context, s *store.Store, rs *receipts.Storage) {
 		log.Printf("cleanup: removed %d expired bill sessions", n)
 	}
 	for _, p := range receiptPaths {
-		if err := rs.Delete(p); err != nil {
+		if err := rs.Delete(ctx, p); err != nil {
 			log.Printf("cleanup: removing receipt file %q: %v", p, err)
 		}
 	}

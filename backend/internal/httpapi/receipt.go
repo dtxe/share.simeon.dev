@@ -47,7 +47,7 @@ func (s *Server) handleUploadReceipt(w http.ResponseWriter, r *http.Request) {
 	}
 	defer file.Close()
 
-	relPath, err := s.Receipts.Save(sessionID, file)
+	relPath, err := s.Receipts.Save(r.Context(), sessionID, file)
 	if err != nil {
 		if s.Cfg.Debug {
 			log.Printf("debug: receipt upload session=%s: %v", sessionID, err)
@@ -73,15 +73,15 @@ func (s *Server) handleGetReceipt(w http.ResponseWriter, r *http.Request) {
 		storeErrToStatus(w, err)
 		return
 	}
-	s.serveReceipt(w, sess)
+	s.serveReceipt(w, r.Context(), sess)
 }
 
-func (s *Server) serveReceipt(w http.ResponseWriter, sess *store.BillSession) {
+func (s *Server) serveReceipt(w http.ResponseWriter, ctx context.Context, sess *store.BillSession) {
 	if sess.ReceiptImagePath == nil {
 		writeJSONError(w, http.StatusNotFound, "no receipt uploaded")
 		return
 	}
-	f, err := s.Receipts.Open(*sess.ReceiptImagePath)
+	f, err := s.Receipts.Open(ctx, *sess.ReceiptImagePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			writeJSONError(w, http.StatusNotFound, "receipt not found")
@@ -156,7 +156,7 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	f, err := s.Receipts.Open(*sess.ReceiptImagePath)
+	f, err := s.Receipts.Open(ctx, *sess.ReceiptImagePath)
 	if err != nil {
 		s.completeEmptyExtractionRun(runID, "error", "opening receipt failed")
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
@@ -304,7 +304,7 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 			defer cancel()
 
-			_, _, err := s.Receipts.Compress(path)
+			_, _, err := s.Receipts.Compress(bgCtx, path)
 			if err != nil {
 				if s.Cfg.Debug {
 					log.Printf("debug: compress receipt session=%s path=%s: %v", sessionID, path, err)

@@ -1,13 +1,13 @@
 package receipts
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/jpeg"
 	"math"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"golang.org/x/image/draw"
 )
@@ -20,12 +20,16 @@ const (
 // Compress re-encodes an existing stored receipt to JPEG quality 70, downscaling
 // so the longest edge is at most 2000 pixels while preserving the aspect ratio.
 // The compressed file atomically replaces the original at the same relative path.
-func (s *Storage) Compress(relPath string) (int, int, error) {
-	if strings.Contains(relPath, "..") {
-		return 0, 0, fmt.Errorf("receipts: invalid path")
+func (s *LocalStorage) Compress(ctx context.Context, relPath string) (int, int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, 0, err
+	}
+	clean, err := NormalizePath(relPath)
+	if err != nil {
+		return 0, 0, err
 	}
 
-	fullPath := filepath.Join(s.Dir, relPath)
+	fullPath := filepath.Join(s.Dir, filepath.FromSlash(clean))
 	f, err := os.Open(fullPath)
 	if err != nil {
 		return 0, 0, fmt.Errorf("receipts: opening image for compress: %w", err)

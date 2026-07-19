@@ -1,7 +1,9 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/url"
 	"os"
@@ -10,10 +12,14 @@ import (
 )
 
 type Config struct {
-	HTTPAddr          string
-	PublicBaseURL     string
-	CORSAllowedOrigin string
-	TrustedProxy      bool
+	ReceiptStorage                           string
+	S3Credentials                            S3Credentials
+	S3Endpoint, S3Bucket, S3Region, S3Prefix string
+	S3VirtualHost                            bool
+	HTTPAddr                                 string
+	PublicBaseURL                            string
+	CORSAllowedOrigin                        string
+	TrustedProxy                             bool
 	// RealIPHeader, when set and TrustedProxy is true, is the request header
 	// that carries the true client address (e.g. "CF-Connecting-IP" behind
 	// Cloudflare). Empty falls back to X-Forwarded-For's last hop.
@@ -75,6 +81,32 @@ type Config struct {
 	Debug bool
 }
 
+type S3Credentials struct {
+	UserName  string `json:"userName"`
+	AccessKey string `json:"accessKey"`
+	SecretKey string `json:"secretKey"`
+}
+
+func ParseS3Credentials(raw string) (S3Credentials, error) {
+	var c S3Credentials
+	if strings.TrimSpace(raw) == "" {
+		return c, fmt.Errorf("S3_CREDENTIALS[_FILE] is required")
+	}
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&c); err != nil {
+		return c, fmt.Errorf("S3_CREDENTIALS is invalid JSON")
+	}
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		return c, fmt.Errorf("S3_CREDENTIALS must contain exactly one JSON object")
+	}
+	if c.UserName == "" || c.AccessKey == "" || c.SecretKey == "" {
+		return c, fmt.Errorf("S3_CREDENTIALS must contain non-empty userName, accessKey, and secretKey")
+	}
+	return c, nil
+}
+
 type LLMPricing struct {
 	InputCostPer1KTokensCents  float64
 	OutputCostPer1KTokensCents float64
@@ -98,6 +130,12 @@ var supportedLLMModelPricing = map[string]LLMPricing{
 // (used for docker secrets in production).
 func Load() (*Config, error) {
 	cfg := &Config{
+		ReceiptStorage:    getEnv("RECEIPT_STORAGE", "s3"),
+		S3Endpoint:        getEnv("S3_ENDPOINT", "https://s3.bhs.io.cloud.ovh.net"),
+		S3Bucket:          getEnv("S3_BUCKET", "share-app"),
+		S3Region:          getEnv("S3_REGION", "bhs"),
+		S3Prefix:          getEnv("S3_PREFIX", "receipts"),
+		S3VirtualHost:     getBool("S3_VIRTUAL_HOST", true),
 		HTTPAddr:          getEnv("HTTP_ADDR", ":8080"),
 		PublicBaseURL:     getEnv("PUBLIC_BASE_URL", "http://localhost:5173"),
 		CORSAllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", ""),
@@ -153,6 +191,22 @@ func Load() (*Config, error) {
 		UploadDir: getEnv("UPLOAD_DIR", "/data/uploads"),
 
 		Debug: getBool("DEBUG", false),
+	}
+	if cfg.ReceiptStorage != "s3" && cfg.ReceiptStorage != "local" {
+		return nil, fmt.Errorf("RECEIPT_STORAGE must be 's3' or 'local', got %q", cfg.ReceiptStorage)
+	}
+	if cfg.ReceiptStorage == "s3" {
+		if cfg.S3Endpoint == "" || cfg.S3Bucket == "" || cfg.S3Region == "" {
+			return nil, fmt.Errorf("S3_ENDPOINT, S3_BUCKET, and S3_REGION are required when RECEIPT_STORAGE=s3")
+		}
+		endpoint, err := url.Parse(cfg.S3Endpoint)
+		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
+			return nil, fmt.Errorf("S3_ENDPOINT must be an absolute HTTPS URL")
+		}
+		cfg.S3Credentials, err = ParseS3Credentials(getEnv("S3_CREDENTIALS", ""))
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if cfg.DatabaseURL == "" {

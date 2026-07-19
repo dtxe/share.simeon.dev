@@ -113,5 +113,5 @@ func (s *Server) handlePublicReceipt(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusNotFound, "not found")
 		return
 	}
-	s.serveReceipt(w, sess)
+	s.serveReceipt(w, r.Context(), sess)
 }
