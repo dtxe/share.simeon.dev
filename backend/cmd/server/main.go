@@ -119,7 +119,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("s3 config: %v", err)
 		}
-		client := s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = !cfg.S3VirtualHost })
+		client := s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = false })
 		rs = receipts.NewS3(client, s3.NewPresignClient(client), cfg.S3Bucket, cfg.S3Prefix)
 	}
 

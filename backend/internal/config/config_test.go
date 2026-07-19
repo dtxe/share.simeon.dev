@@ -1,9 +1,60 @@
 package config
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+func TestLoadMigrationBuildsDatabaseURL(t *testing.T) {
+	setMigrationEnv(t)
+	t.Setenv("DATABASE_URL", "")
+	t.Setenv("DB_USER", "user name")
+	t.Setenv("DB_PASSWORD", "p@ss")
+	t.Setenv("DB_NAME", "share")
+	t.Setenv("DB_HOST", "db")
+	c, err := LoadMigration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.DatabaseURL != "postgres://user+name:p%40ss@db:5432/share?sslmode=disable" {
+		t.Fatalf("DatabaseURL = %q", c.DatabaseURL)
+	}
+}
+
+func TestLoadMigrationCredentialFile(t *testing.T) {
+	setMigrationEnv(t)
+	f := filepath.Join(t.TempDir(), "credentials.json")
+	if err := os.WriteFile(f, []byte(`{"userName":"u","accessKey":"a","secretKey":"s"}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("S3_CREDENTIALS_FILE", f)
+	c, err := LoadMigration()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c.S3Credentials.SecretKey != "s" {
+		t.Fatal("credentials were not loaded")
+	}
+}
+
+func TestLoadMigrationCredentialFileUnreadable(t *testing.T) {
+	setMigrationEnv(t)
+	t.Setenv("S3_CREDENTIALS_FILE", filepath.Join(t.TempDir(), "missing"))
+	if _, err := LoadMigration(); err == nil || !strings.Contains(err.Error(), "S3_CREDENTIALS_FILE") {
+		t.Fatalf("error = %v", err)
+	}
+}
+
+func setMigrationEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{"DATABASE_URL", "DB_USER", "DB_PASSWORD", "DB_NAME", "DB_HOST", "DB_PORT", "S3_CREDENTIALS", "S3_CREDENTIALS_FILE"} {
+		t.Setenv(key, "")
+	}
+	t.Setenv("DATABASE_URL", "postgres://user:pass@db/share")
+	t.Setenv("S3_CREDENTIALS", `{"userName":"u","accessKey":"a","secretKey":"s"}`)
+}
 
 func TestLoadDefaultsToMinimaxM3Pricing(t *testing.T) {
 	setRequiredEnv(t)

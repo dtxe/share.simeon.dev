@@ -16,7 +16,6 @@ type Config struct {
 	S3Credentials                            S3Credentials
 	S3Endpoint, S3Bucket, S3Region, S3Prefix string
 	S3ProxyHost                              string
-	S3VirtualHost                            bool
 	HTTPAddr                                 string
 	PublicBaseURL                            string
 	CORSAllowedOrigin                        string
@@ -88,6 +87,97 @@ type S3Credentials struct {
 	SecretKey string `json:"secretKey"`
 }
 
+// MigrationConfig contains only the configuration needed by receipt-migrate.
+// Keeping this separate prevents an operations command from requiring the
+// application's Redis, SMTP, or LLM settings.
+type MigrationConfig struct {
+	DatabaseURL, UploadDir                                string
+	S3Endpoint, S3Bucket, S3Region, S3Prefix, S3ProxyHost string
+	S3Credentials                                         S3Credentials
+}
+
+func LoadMigration() (*MigrationConfig, error) {
+	var err error
+	c := &MigrationConfig{}
+	if c.DatabaseURL, err = getEnvSafe("DATABASE_URL", ""); err != nil {
+		return nil, err
+	}
+	if c.UploadDir, err = getEnvSafe("UPLOAD_DIR", "/data/uploads"); err != nil {
+		return nil, err
+	}
+	if c.S3Endpoint, err = getEnvSafe("S3_ENDPOINT", "https://s3.bhs.io.cloud.ovh.net"); err != nil {
+		return nil, err
+	}
+	if c.S3Bucket, err = getEnvSafe("S3_BUCKET", "share-app"); err != nil {
+		return nil, err
+	}
+	if c.S3Region, err = getEnvSafe("S3_REGION", "bhs"); err != nil {
+		return nil, err
+	}
+	if c.S3Prefix, err = getEnvSafe("S3_PREFIX", "receipts"); err != nil {
+		return nil, err
+	}
+	if c.S3ProxyHost, err = getEnvSafe("S3_PROXY_HOST", "share-app.s3.bhs.io.cloud.ovh.net"); err != nil {
+		return nil, err
+	}
+	if c.DatabaseURL == "" {
+		var u, p, n string
+		if u, err = getEnvSafe("DB_USER", ""); err != nil {
+			return nil, err
+		}
+		if p, err = getEnvSafe("DB_PASSWORD", ""); err != nil {
+			return nil, err
+		}
+		if n, err = getEnvSafe("DB_NAME", ""); err != nil {
+			return nil, err
+		}
+		var host, port string
+		if host, err = getEnvSafe("DB_HOST", "postgres"); err != nil {
+			return nil, err
+		}
+		if port, err = getEnvSafe("DB_PORT", "5432"); err != nil {
+			return nil, err
+		}
+		if u == "" || p == "" || n == "" {
+			return nil, fmt.Errorf("DATABASE_URL is required (or DB_HOST/DB_PORT/DB_USER/DB_PASSWORD[_FILE]/DB_NAME)")
+		}
+		c.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", url.QueryEscape(u), url.QueryEscape(p), host, port, url.QueryEscape(n))
+	}
+	endpoint, err := url.Parse(c.S3Endpoint)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
+		return nil, fmt.Errorf("S3_ENDPOINT must be an absolute HTTPS URL")
+	}
+	if c.S3Bucket == "" || c.S3Region == "" || c.S3ProxyHost == "" {
+		return nil, fmt.Errorf("S3_BUCKET, S3_REGION, and S3_PROXY_HOST are required")
+	}
+	if strings.ContainsAny(c.S3ProxyHost, "/?#@: \t\r\n") {
+		return nil, fmt.Errorf("S3_PROXY_HOST must be a hostname without scheme, port, or path")
+	}
+	var rawCredentials string
+	if rawCredentials, err = getEnvSafe("S3_CREDENTIALS", ""); err != nil {
+		return nil, err
+	}
+	c.S3Credentials, err = ParseS3Credentials(rawCredentials)
+	if err != nil {
+		return nil, err
+	}
+	return c, nil
+}
+
+func getEnvSafe(key, def string) (string, error) {
+	if p := os.Getenv(key + "_FILE"); p != "" {
+		b, err := os.ReadFile(p)
+		if err != nil {
+			return "", fmt.Errorf("%s_FILE (%s): %w", key, p, err)
+		}
+		return strings.TrimSpace(string(b)), nil
+	}
+	if v := os.Getenv(key); v != "" {
+		return v, nil
+	}
+	return def, nil
+}
+
 func ParseS3Credentials(raw string) (S3Credentials, error) {
 	var c S3Credentials
 	if strings.TrimSpace(raw) == "" {
@@ -137,7 +227,6 @@ func Load() (*Config, error) {
 		S3Region:          getEnv("S3_REGION", "bhs"),
 		S3Prefix:          getEnv("S3_PREFIX", "receipts"),
 		S3ProxyHost:       getEnv("S3_PROXY_HOST", "share-app.s3.bhs.io.cloud.ovh.net"),
-		S3VirtualHost:     getBool("S3_VIRTUAL_HOST", true),
 		HTTPAddr:          getEnv("HTTP_ADDR", ":8080"),
 		PublicBaseURL:     getEnv("PUBLIC_BASE_URL", "http://localhost:5173"),
 		CORSAllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", ""),

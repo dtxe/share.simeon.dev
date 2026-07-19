@@ -60,6 +60,31 @@ services:
       timeout: 5s
       retries: 10
 
+  receipt-migrate:
+    profiles: [ops]
+    build:
+      context: .
+      dockerfile: docker/backend.Dockerfile
+      target: prod
+    env_file: .env
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: ${POSTGRES_USER}
+      DB_NAME: ${POSTGRES_DB}
+      DB_PASSWORD_FILE: /run/secrets/postgres_password
+      S3_CREDENTIALS_FILE: /run/secrets/s3_credentials
+    secrets:
+      - postgres_password
+      - s3_credentials
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - uploads:/data/uploads:ro
+    entrypoint: ["/receipt-migrate"]
+    command: ["preflight"]
+
   frontend:
     build:
       context: .
