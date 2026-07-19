@@ -36,6 +36,7 @@ type Reconciliation struct {
 	FailedChecks                int
 	AggregateAbsDifferenceCents int64
 	MultipleTaxRatesDetected    bool
+	MultipleTaxRatesChecked     bool
 }
 
 func abs64(v int64) int64 {
@@ -69,6 +70,7 @@ func Reconcile(receipt *llm.ExtractedReceipt) Reconciliation {
 	receipt.NormalizeTaxable()
 	r := Reconciliation{TaxSource: TaxSourceUnresolved}
 	if receipt.MultipleTaxRatesDetected != nil {
+		r.MultipleTaxRatesChecked = true
 		r.MultipleTaxRatesDetected = *receipt.MultipleTaxRatesDetected
 	}
 	itemsValid := true

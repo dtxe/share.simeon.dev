@@ -37,6 +37,7 @@ type BillSession struct {
 	RestaurantName         *string
 	BillDate               *time.Time
 	SubtotalCents          int64
+	TaxCents               *int64
 	TotalPaidCents         *int64
 	ReceiptImagePath       *string
 	ReceiptImageCompressed bool
@@ -60,6 +61,7 @@ type Dish struct {
 	Quantity       float64 `json:"-"`
 	SortOrder      int     `json:"sortOrder"`
 	Source         string  `json:"source"`
+	Taxable        bool    `json:"taxable"`
 }
 
 type Portion struct {
@@ -82,8 +84,8 @@ func (s *Store) CreateSession(ctx context.Context, ownerUserID string) (*BillSes
 	err := s.Pool.QueryRow(ctx, `
 		INSERT INTO bill_sessions (owner_user_id)
 		VALUES ($1)
-		RETURNING id::text, subtotal_cents, extract_count, created_at, updated_at
-	`, ownerUserID).Scan(&b.ID, &b.SubtotalCents, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
+		RETURNING id::text, subtotal_cents, tax_cents, extract_count, created_at, updated_at
+	`, ownerUserID).Scan(&b.ID, &b.SubtotalCents, &b.TaxCents, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -93,7 +95,7 @@ func (s *Store) CreateSession(ctx context.Context, ownerUserID string) (*BillSes
 // ListSessionsByOwner is the "history" list — most recently updated first.
 func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]BillSession, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
+		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents, tax_cents,
 		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
 		FROM bill_sessions
 		WHERE owner_user_id = $1
@@ -108,7 +110,7 @@ func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]
 	for rows.Next() {
 		var b BillSession
 		b.OwnerUserID = ownerUserID
-		if err := rows.Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
+		if err := rows.Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents, &b.TaxCents,
 			&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt); err != nil {
 			return nil, err
 		}
@@ -122,12 +124,12 @@ func (s *Store) GetSession(ctx context.Context, id, ownerUserID string) (*BillSe
 	var b BillSession
 	b.OwnerUserID = ownerUserID
 	err := s.Pool.QueryRow(ctx, `
-		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
+		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents, tax_cents,
 		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
 		FROM bill_sessions
 		WHERE id = $1 AND owner_user_id = $2
 	`, id, ownerUserID).Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
-		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
+		&b.TaxCents, &b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return nil, noRows(err)
 	}
@@ -139,6 +141,7 @@ type SessionPatch struct {
 	RestaurantName *string
 	BillDate       *time.Time
 	TotalPaidCents *int64
+	TaxCents       *int64
 }
 
 // UpdateSession applies whichever fields are non-nil in patch. Bumps
@@ -150,10 +153,11 @@ func (s *Store) UpdateSession(ctx context.Context, id, ownerUserID string, patch
 		    restaurant_name = COALESCE($4, restaurant_name),
 		    bill_date = COALESCE($5, bill_date),
 		    total_paid_cents = COALESCE($6, total_paid_cents),
+		    tax_cents = COALESCE($7, tax_cents),
 		    updated_at = now(),
 		    expires_at = now() + interval '60 days'
 		WHERE id = $1 AND owner_user_id = $2
-	`, id, ownerUserID, patch.Title, patch.RestaurantName, patch.BillDate, patch.TotalPaidCents)
+	`, id, ownerUserID, patch.Title, patch.RestaurantName, patch.BillDate, patch.TotalPaidCents, patch.TaxCents)
 	if err != nil {
 		return err
 	}
@@ -340,6 +344,7 @@ type NewDish struct {
 	Name           string
 	UnitPriceCents int64
 	Source         string // "manual" | "llm_extracted"
+	Taxable        bool
 }
 
 // ReplaceDishes deletes all existing dishes (and their portions, via
@@ -373,12 +378,13 @@ func (s *Store) ReplaceDishes(ctx context.Context, sessionID, ownerUserID string
 		dish.UnitPriceCents = d.UnitPriceCents
 		dish.Quantity = 1
 		dish.Source = source
+		dish.Taxable = d.Taxable
 		dish.SortOrder = i
 		err := tx.QueryRow(ctx, `
-			INSERT INTO dishes (session_id, name, unit_price_cents, quantity, sort_order, source)
-			VALUES ($1, $2, $3, 1, $4, $5)
+			INSERT INTO dishes (session_id, name, unit_price_cents, quantity, sort_order, source, taxable)
+			VALUES ($1, $2, $3, 1, $4, $5, $6)
 			RETURNING id::text
-		`, sessionID, d.Name, d.UnitPriceCents, i, source).Scan(&dish.ID)
+		`, sessionID, d.Name, d.UnitPriceCents, i, source, d.Taxable).Scan(&dish.ID)
 		if err != nil {
 			return nil, err
 		}
@@ -407,7 +413,7 @@ func (s *Store) ListDishes(ctx context.Context, sessionID, ownerUserID string) (
 
 func (s *Store) listDishesUnchecked(ctx context.Context, sessionID string) ([]Dish, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id::text, name, unit_price_cents, quantity, sort_order, source
+		SELECT id::text, name, unit_price_cents, quantity, sort_order, source, taxable
 		FROM dishes WHERE session_id = $1 ORDER BY sort_order
 	`, sessionID)
 	if err != nil {
@@ -418,7 +424,7 @@ func (s *Store) listDishesUnchecked(ctx context.Context, sessionID string) ([]Di
 	for rows.Next() {
 		var d Dish
 		d.SessionID = sessionID
-		if err := rows.Scan(&d.ID, &d.Name, &d.UnitPriceCents, &d.Quantity, &d.SortOrder, &d.Source); err != nil {
+		if err := rows.Scan(&d.ID, &d.Name, &d.UnitPriceCents, &d.Quantity, &d.SortOrder, &d.Source, &d.Taxable); err != nil {
 			return nil, err
 		}
 		out = append(out, d)
@@ -443,11 +449,12 @@ func (s *Store) AddDish(ctx context.Context, sessionID, ownerUserID string, d Ne
 	dish.UnitPriceCents = d.UnitPriceCents
 	dish.Quantity = 1
 	dish.Source = source
+	dish.Taxable = d.Taxable
 	err := s.Pool.QueryRow(ctx, `
-		INSERT INTO dishes (session_id, name, unit_price_cents, quantity, sort_order, source)
-		VALUES ($1, $2, $3, 1, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM dishes WHERE session_id = $1), $4)
+		INSERT INTO dishes (session_id, name, unit_price_cents, quantity, sort_order, source, taxable)
+		VALUES ($1, $2, $3, 1, (SELECT COALESCE(MAX(sort_order), -1) + 1 FROM dishes WHERE session_id = $1), $4, $5)
 		RETURNING id::text, sort_order
-	`, sessionID, d.Name, d.UnitPriceCents, source).Scan(&dish.ID, &dish.SortOrder)
+	`, sessionID, d.Name, d.UnitPriceCents, source, d.Taxable).Scan(&dish.ID, &dish.SortOrder)
 	if err != nil {
 		return nil, err
 	}
@@ -480,15 +487,16 @@ func (s *Store) UpsertPortion(ctx context.Context, dishID, personID, ownerUserID
 	return nil
 }
 
-func (s *Store) UpdateDish(ctx context.Context, dishID, ownerUserID string, name *string, unitPriceCents *int64) error {
+func (s *Store) UpdateDish(ctx context.Context, dishID, ownerUserID string, name *string, unitPriceCents *int64, taxable *bool) error {
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE dishes SET
 		  name = COALESCE($3, name),
-		  unit_price_cents = COALESCE($4, unit_price_cents)
+		  unit_price_cents = COALESCE($4, unit_price_cents),
+		  taxable = COALESCE($5, taxable)
 		FROM bill_sessions
 		WHERE dishes.session_id = bill_sessions.id
 		  AND dishes.id = $1 AND bill_sessions.owner_user_id = $2
-	`, dishID, ownerUserID, name, unitPriceCents)
+	`, dishID, ownerUserID, name, unitPriceCents, taxable)
 	if err != nil {
 		return err
 	}
@@ -557,12 +565,12 @@ func (s *Store) GetByViewToken(ctx context.Context, rawToken string) (*BillSessi
 	sum := sha256.Sum256([]byte(rawToken))
 	var b BillSession
 	err := s.Pool.QueryRow(ctx, `
-		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
+		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents, tax_cents,
 		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
 		FROM bill_sessions
 		WHERE view_token_hash = $1
 	`, sum[:]).Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
-		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
+		&b.TaxCents, &b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return nil, noRows(err)
 	}
@@ -764,33 +772,45 @@ func (s *Store) BeginExtractionRun(ctx context.Context, in BeginExtractionRunInp
 
 // ExtractionAttempt represents one LLM call within an extraction run.
 type ExtractionAttempt struct {
-	Attempt           int
-	Provider          string
-	Model             string
-	Status            string // "success" | "error"
-	ErrorMessage      *string
-	RawResponse       []byte
-	PromptTokens      *int
-	CompletionTokens  *int
-	CostCents         *int
-	SubtotalMatched   *bool
-	SubtotalDiffCents *int64
+	Attempt                  int
+	Provider                 string
+	Model                    string
+	Status                   string // "success" | "error"
+	ErrorMessage             *string
+	RawResponse              []byte
+	PromptTokens             *int
+	CompletionTokens         *int
+	CostCents                *int
+	SubtotalMatched          *bool
+	SubtotalDiffCents        *int64
+	TaxMatched               *bool
+	TaxDiffCents             *int64
+	GrandTotalMatched        *bool
+	GrandTotalDiffCents      *int64
+	TaxSource                *string
+	MultipleTaxRatesDetected *bool
 }
 
 // CompleteExtractionRunInput contains the terminal state of an extraction run
 // and all child attempts to persist atomically.
 type CompleteExtractionRunInput struct {
-	RunID                string
-	Status               string // "success" | "error" | "rejected"
-	ErrorMessage         *string
-	SubtotalMatched      *bool
-	SubtotalDiffCents    *int64
-	KnownActualCostCents *int
-	AccountedCostCents   *int
-	ReservationAccepted  bool
-	SpendReconciled      bool
-	CompletedAt          time.Time
-	Attempts             []ExtractionAttempt
+	RunID                    string
+	Status                   string // "success" | "error" | "rejected"
+	ErrorMessage             *string
+	SubtotalMatched          *bool
+	SubtotalDiffCents        *int64
+	TaxMatched               *bool
+	TaxDiffCents             *int64
+	GrandTotalMatched        *bool
+	GrandTotalDiffCents      *int64
+	TaxSource                *string
+	MultipleTaxRatesDetected *bool
+	KnownActualCostCents     *int
+	AccountedCostCents       *int
+	ReservationAccepted      bool
+	SpendReconciled          bool
+	CompletedAt              time.Time
+	Attempts                 []ExtractionAttempt
 }
 
 // CompleteExtractionRun transactionally inserts all child extraction_attempts
@@ -810,8 +830,9 @@ func (s *Store) CompleteExtractionRun(ctx context.Context, in CompleteExtraction
 		}
 		if _, err := tx.Exec(ctx, `
 			INSERT INTO extraction_attempts (run_id, attempt, provider, model, status, error_message, raw_response,
-				prompt_tokens, completion_tokens, cost_cents, subtotal_matched, subtotal_diff_cents)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+				prompt_tokens, completion_tokens, cost_cents, subtotal_matched, subtotal_diff_cents,
+				tax_matched, tax_diff_cents, grand_total_matched, grand_total_diff_cents, tax_source, multiple_tax_rates_detected)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
 			ON CONFLICT (run_id, attempt) DO UPDATE SET
 				provider = EXCLUDED.provider,
 				model = EXCLUDED.model,
@@ -822,9 +843,13 @@ func (s *Store) CompleteExtractionRun(ctx context.Context, in CompleteExtraction
 				completion_tokens = EXCLUDED.completion_tokens,
 				cost_cents = EXCLUDED.cost_cents,
 				subtotal_matched = EXCLUDED.subtotal_matched,
-				subtotal_diff_cents = EXCLUDED.subtotal_diff_cents
+				subtotal_diff_cents = EXCLUDED.subtotal_diff_cents,
+				tax_matched = EXCLUDED.tax_matched, tax_diff_cents = EXCLUDED.tax_diff_cents,
+				grand_total_matched = EXCLUDED.grand_total_matched, grand_total_diff_cents = EXCLUDED.grand_total_diff_cents,
+				tax_source = EXCLUDED.tax_source, multiple_tax_rates_detected = EXCLUDED.multiple_tax_rates_detected
 		`, in.RunID, a.Attempt, a.Provider, a.Model, a.Status, a.ErrorMessage, rawResponse,
-			a.PromptTokens, a.CompletionTokens, a.CostCents, a.SubtotalMatched, a.SubtotalDiffCents); err != nil {
+			a.PromptTokens, a.CompletionTokens, a.CostCents, a.SubtotalMatched, a.SubtotalDiffCents,
+			a.TaxMatched, a.TaxDiffCents, a.GrandTotalMatched, a.GrandTotalDiffCents, a.TaxSource, a.MultipleTaxRatesDetected); err != nil {
 			return err
 		}
 	}
@@ -835,6 +860,8 @@ func (s *Store) CompleteExtractionRun(ctx context.Context, in CompleteExtraction
 		    error_message = $3,
 		    subtotal_matched = $4,
 		    subtotal_diff_cents = $5,
+		    tax_matched = $12, tax_diff_cents = $13, grand_total_matched = $14, grand_total_diff_cents = $15,
+		    tax_source = $16, multiple_tax_rates_detected = $17,
 		    known_actual_cost_cents = $6,
 		    accounted_cost_cents = $7,
 		    attempt_count = $8,
@@ -844,7 +871,7 @@ func (s *Store) CompleteExtractionRun(ctx context.Context, in CompleteExtraction
 		WHERE id = $1
 	`, in.RunID, in.Status, in.ErrorMessage, in.SubtotalMatched, in.SubtotalDiffCents,
 		in.KnownActualCostCents, in.AccountedCostCents, len(in.Attempts), in.CompletedAt,
-		in.SpendReconciled, in.ReservationAccepted); err != nil {
+		in.SpendReconciled, in.ReservationAccepted, in.TaxMatched, in.TaxDiffCents, in.GrandTotalMatched, in.GrandTotalDiffCents, in.TaxSource, in.MultipleTaxRatesDetected); err != nil {
 		return err
 	}
 

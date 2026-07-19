@@ -14,6 +14,10 @@ import (
 	"share/backend/internal/store"
 )
 
+func normalizeTaxable(v *bool) bool {
+	return v == nil || *v
+}
+
 func storeErrToStatus(w http.ResponseWriter, err error) {
 	if errors.Is(err, store.ErrNotFound) {
 		writeJSONError(w, http.StatusNotFound, "not found")
@@ -57,6 +61,7 @@ type sessionSummaryDTO struct {
 	RestaurantName *string    `json:"restaurantName"`
 	BillDate       *time.Time `json:"billDate"`
 	SubtotalCents  int64      `json:"subtotalCents"`
+	TaxCents       *int64     `json:"taxCents"`
 	TotalPaidCents *int64     `json:"totalPaidCents"`
 	HasReceipt     bool       `json:"hasReceipt"`
 	CreatedAt      time.Time  `json:"createdAt"`
@@ -70,6 +75,7 @@ func sessionSummary(b store.BillSession) sessionSummaryDTO {
 		RestaurantName: b.RestaurantName,
 		BillDate:       b.BillDate,
 		SubtotalCents:  b.SubtotalCents,
+		TaxCents:       b.TaxCents,
 		TotalPaidCents: b.TotalPaidCents,
 		HasReceipt:     b.ReceiptImagePath != nil,
 		CreatedAt:      b.CreatedAt,
@@ -135,6 +141,7 @@ type updateSessionBody struct {
 	RestaurantName *string    `json:"restaurantName"`
 	BillDate       *time.Time `json:"billDate"`
 	TotalPaidCents *int64     `json:"totalPaidCents"`
+	TaxCents       *int64     `json:"taxCents"`
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
@@ -155,6 +162,10 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "totalPaidCents out of range")
 		return
 	}
+	if body.TaxCents != nil && (*body.TaxCents < 0 || *body.TaxCents > 500_000_000) {
+		writeJSONError(w, http.StatusBadRequest, "taxCents out of range")
+		return
+	}
 	if body.Title != nil && len(*body.Title) > 120 {
 		writeJSONError(w, http.StatusBadRequest, "title too long")
 		return
@@ -165,6 +176,7 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		RestaurantName: body.RestaurantName,
 		BillDate:       body.BillDate,
 		TotalPaidCents: body.TotalPaidCents,
+		TaxCents:       body.TaxCents,
 	})
 	if err != nil {
 		storeErrToStatus(w, err)
@@ -239,6 +251,7 @@ type dishInput struct {
 	Name           string `json:"name"`
 	UnitPriceCents int64  `json:"unitPriceCents"`
 	Source         string `json:"source"`
+	Taxable        *bool  `json:"taxable"`
 }
 
 type replaceDishesBody struct {
@@ -277,6 +290,7 @@ func (s *Server) handleReplaceDishes(w http.ResponseWriter, r *http.Request) {
 			Name:           d.Name,
 			UnitPriceCents: d.UnitPriceCents,
 			Source:         d.Source,
+			Taxable:        normalizeTaxable(d.Taxable),
 		})
 	}
 
@@ -317,6 +331,7 @@ func (s *Server) handleAddDish(w http.ResponseWriter, r *http.Request) {
 		Name:           body.Name,
 		UnitPriceCents: body.UnitPriceCents,
 		Source:         "manual",
+		Taxable:        normalizeTaxable(body.Taxable),
 	})
 	if err != nil {
 		storeErrToStatus(w, err)
@@ -340,6 +355,7 @@ func (s *Server) handleDeleteDish(w http.ResponseWriter, r *http.Request) {
 type updateDishBody struct {
 	Name           *string `json:"name"`
 	UnitPriceCents *int64  `json:"unitPriceCents"`
+	Taxable        *bool   `json:"taxable"`
 }
 
 func (s *Server) handleUpdateDish(w http.ResponseWriter, r *http.Request) {
@@ -362,7 +378,7 @@ func (s *Server) handleUpdateDish(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "dish name must be 1-100 characters")
 		return
 	}
-	if err := s.Store.UpdateDish(r.Context(), chi.URLParam(r, "dishId"), userID, body.Name, body.UnitPriceCents); err != nil {
+	if err := s.Store.UpdateDish(r.Context(), chi.URLParam(r, "dishId"), userID, body.Name, body.UnitPriceCents, body.Taxable); err != nil {
 		storeErrToStatus(w, err)
 		return
 	}

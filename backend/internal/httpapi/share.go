@@ -72,6 +72,7 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 			"id":             d.ID,
 			"name":           d.Name,
 			"unitPriceCents": d.UnitPriceCents,
+			"taxable":        d.Taxable,
 		})
 	}
 
@@ -97,6 +98,7 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 		"restaurantName": sess.RestaurantName,
 		"billDate":       sess.BillDate,
 		"subtotalCents":  sess.SubtotalCents,
+		"taxCents":       sess.TaxCents,
 		"totalPaidCents": sess.TotalPaidCents,
 		"hasReceipt":     sess.ReceiptImagePath != nil,
 		"people":         publicPeople,

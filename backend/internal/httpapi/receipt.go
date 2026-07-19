@@ -17,6 +17,7 @@ import (
 
 	"share/backend/internal/auth"
 	"share/backend/internal/extraction"
+	"share/backend/internal/llm"
 	"share/backend/internal/receipts"
 	"share/backend/internal/store"
 )
@@ -208,17 +209,23 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	}
 	accountedCost := accountedCents
 	telemetryErr := s.Store.CompleteExtractionRun(accountingCtx, store.CompleteExtractionRunInput{
-		RunID:                runID,
-		Status:               terminalStatus,
-		ErrorMessage:         runErrMsg,
-		SubtotalMatched:      runResult.SubtotalMatched,
-		SubtotalDiffCents:    runResult.SubtotalDiffCents,
-		KnownActualCostCents: knownActualCost,
-		AccountedCostCents:   &accountedCost,
-		ReservationAccepted:  true,
-		SpendReconciled:      reconcileErr == nil,
-		CompletedAt:          time.Now(),
-		Attempts:             attemptRows,
+		RunID:                    runID,
+		Status:                   terminalStatus,
+		ErrorMessage:             runErrMsg,
+		SubtotalMatched:          runResult.SubtotalMatched,
+		SubtotalDiffCents:        runResult.SubtotalDiffCents,
+		TaxMatched:               nullableBool(runResult.Reconciliation.TaxChecked, runResult.Reconciliation.TaxMatched),
+		TaxDiffCents:             nullableInt64(runResult.Reconciliation.TaxChecked, runResult.Reconciliation.TaxDiffCents),
+		GrandTotalMatched:        nullableBool(runResult.Reconciliation.GrandTotalChecked, runResult.Reconciliation.GrandTotalMatched),
+		GrandTotalDiffCents:      nullableInt64(runResult.Reconciliation.GrandTotalChecked, runResult.Reconciliation.GrandTotalDiffCents),
+		TaxSource:                nullableSource(runResult.Reconciliation.TaxSource),
+		MultipleTaxRatesDetected: nullableBool(runResult.Reconciliation.MultipleTaxRatesChecked, runResult.Reconciliation.MultipleTaxRatesDetected),
+		KnownActualCostCents:     knownActualCost,
+		AccountedCostCents:       &accountedCost,
+		ReservationAccepted:      true,
+		SpendReconciled:          reconcileErr == nil,
+		CompletedAt:              time.Now(),
+		Attempts:                 attemptRows,
 	})
 	accountingCancel()
 	if telemetryErr != nil {
@@ -255,6 +262,7 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 			Name:           name,
 			UnitPriceCents: lineTotal,
 			Source:         "llm_extracted",
+			Taxable:        it.Taxable == nil || *it.Taxable,
 		})
 	}
 	if _, err := s.Store.ReplaceDishes(ctx, sessionID, userID, newDishes); err != nil {
@@ -282,11 +290,18 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	}
 	if sess.TotalPaidCents == nil {
 		total := runResult.Receipt.TotalPaidCents
-		if total <= 0 && runResult.Receipt.SubtotalCents > 0 && runResult.Receipt.TipCents > 0 {
-			total = runResult.Receipt.SubtotalCents + runResult.Receipt.TipCents
+		if total <= 0 && runResult.Reconciliation.ResolvedTaxCents != nil && runResult.Receipt.SubtotalCents > 0 && runResult.Receipt.TipKnown != nil && *runResult.Receipt.TipKnown && runResult.Receipt.TipCents >= 0 {
+			total = runResult.Receipt.SubtotalCents + *runResult.Reconciliation.ResolvedTaxCents + runResult.Receipt.TipCents
 		}
 		if total > 0 && total <= 5_000_000_00 {
 			patch.TotalPaidCents = &total
+			hasPatch = true
+		}
+	}
+	if sess.TaxCents == nil && runResult.Reconciliation.ResolvedTaxCents != nil {
+		tax := *runResult.Reconciliation.ResolvedTaxCents
+		if tax >= 0 && tax <= 500_000_000 {
+			patch.TaxCents = &tax
 			hasPatch = true
 		}
 	}
@@ -317,7 +332,81 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		}(*sess.ReceiptImagePath)
 	}
 
-	writeJSON(w, http.StatusOK, runResult.Receipt)
+	writeJSON(w, http.StatusOK, extractionResponse(runResult))
+}
+
+func nullableBool(checked, value bool) *bool {
+	if !checked {
+		return nil
+	}
+	return &value
+}
+func nullableInt64(checked bool, value int64) *int64 {
+	if !checked {
+		return nil
+	}
+	return &value
+}
+func nullableSource(source extraction.TaxSource) *string {
+	if source == extraction.TaxSourceUnresolved || source == "" {
+		return nil
+	}
+	v := string(source)
+	return &v
+}
+
+type verificationValue struct {
+	Checked   bool  `json:"checked"`
+	Matched   bool  `json:"matched"`
+	DiffCents int64 `json:"diffCents"`
+}
+type extractionResponseBody struct {
+	RestaurantName           string                 `json:"restaurantName,omitempty"`
+	Date                     string                 `json:"date,omitempty"`
+	SubtotalCents            int64                  `json:"subtotalCents,omitempty"`
+	TipCents                 int64                  `json:"tipCents,omitempty"`
+	TotalPaidCents           int64                  `json:"totalPaidCents,omitempty"`
+	TaxCents                 *int64                 `json:"taxCents,omitempty"`
+	TaxRateBasisPoints       *int64                 `json:"taxRateBasisPoints,omitempty"`
+	TipKnown                 *bool                  `json:"tipKnown,omitempty"`
+	HasNonTaxAdjustments     *bool                  `json:"hasNonTaxAdjustments,omitempty"`
+	MultipleTaxRatesDetected *bool                  `json:"multipleTaxRatesDetected,omitempty"`
+	Items                    []llm.ExtractedItem    `json:"items"`
+	Verification             extractionVerification `json:"verification"`
+}
+type extractionVerification struct {
+	Subtotal                 verificationValue `json:"subtotal"`
+	Tax                      verificationValue `json:"tax"`
+	GrandTotal               verificationValue `json:"grandTotal"`
+	TaxSource                string            `json:"taxSource"`
+	MultipleTaxRatesDetected bool              `json:"multipleTaxRatesDetected"`
+}
+
+func extractionResponse(result extraction.RunResult) extractionResponseBody {
+	// Keep the response contract consistent even when a strategy returns a
+	// result assembled outside the normal provider/reconciliation path.
+	result.Receipt.NormalizeTaxable()
+	r := result.Reconciliation
+	return extractionResponseBody{
+		RestaurantName:           result.Receipt.RestaurantName,
+		Date:                     result.Receipt.Date,
+		SubtotalCents:            result.Receipt.SubtotalCents,
+		TipCents:                 result.Receipt.TipCents,
+		TotalPaidCents:           result.Receipt.TotalPaidCents,
+		TaxCents:                 r.ResolvedTaxCents,
+		TaxRateBasisPoints:       result.Receipt.TaxRateBasisPoints,
+		TipKnown:                 result.Receipt.TipKnown,
+		HasNonTaxAdjustments:     result.Receipt.HasNonTaxAdjustments,
+		MultipleTaxRatesDetected: result.Receipt.MultipleTaxRatesDetected,
+		Items:                    result.Receipt.Items,
+		Verification: extractionVerification{
+			Subtotal:                 verificationValue{Checked: r.ItemSubtotalChecked, Matched: r.ItemSubtotalMatched, DiffCents: r.ItemSubtotalDiffCents},
+			Tax:                      verificationValue{Checked: r.TaxChecked, Matched: r.TaxMatched, DiffCents: r.TaxDiffCents},
+			GrandTotal:               verificationValue{Checked: r.GrandTotalChecked, Matched: r.GrandTotalMatched, DiffCents: r.GrandTotalDiffCents},
+			TaxSource:                string(r.TaxSource),
+			MultipleTaxRatesDetected: r.MultipleTaxRatesDetected,
+		},
+	}
 }
 
 // formatQtyPrefix formats a quantity as a compact name prefix, e.g. "2x " or "0.5x ".
@@ -379,17 +468,23 @@ func buildAttemptTelemetry(attempts []extraction.Attempt, maxCalls int) ([]store
 			accountedCents += *costCents
 		}
 		rows = append(rows, store.ExtractionAttempt{
-			Attempt:           i + 1,
-			Provider:          attempt.Provider,
-			Model:             attempt.Model,
-			Status:            status,
-			ErrorMessage:      errMsg,
-			RawResponse:       attempt.RawJSON,
-			PromptTokens:      &promptTok,
-			CompletionTokens:  &completeTok,
-			CostCents:         costCents,
-			SubtotalMatched:   attempt.SubtotalMatched,
-			SubtotalDiffCents: attempt.SubtotalDiffCents,
+			Attempt:                  i + 1,
+			Provider:                 attempt.Provider,
+			Model:                    attempt.Model,
+			Status:                   status,
+			ErrorMessage:             errMsg,
+			RawResponse:              attempt.RawJSON,
+			PromptTokens:             &promptTok,
+			CompletionTokens:         &completeTok,
+			CostCents:                costCents,
+			SubtotalMatched:          attempt.SubtotalMatched,
+			SubtotalDiffCents:        attempt.SubtotalDiffCents,
+			TaxMatched:               nullableBool(attempt.Reconciliation.TaxChecked, attempt.Reconciliation.TaxMatched),
+			TaxDiffCents:             nullableInt64(attempt.Reconciliation.TaxChecked, attempt.Reconciliation.TaxDiffCents),
+			GrandTotalMatched:        nullableBool(attempt.Reconciliation.GrandTotalChecked, attempt.Reconciliation.GrandTotalMatched),
+			GrandTotalDiffCents:      nullableInt64(attempt.Reconciliation.GrandTotalChecked, attempt.Reconciliation.GrandTotalDiffCents),
+			TaxSource:                nullableSource(attempt.Reconciliation.TaxSource),
+			MultipleTaxRatesDetected: nullableBool(attempt.Reconciliation.MultipleTaxRatesChecked, attempt.Reconciliation.MultipleTaxRatesDetected),
 		})
 	}
 
