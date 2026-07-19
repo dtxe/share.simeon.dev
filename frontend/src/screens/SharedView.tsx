@@ -26,7 +26,9 @@ export default function SharedView() {
 
   const subtotalCents = data.subtotalCents
   const totalPaidCents = data.totalPaidCents
-  const taxTip = totalPaidCents != null ? totalPaidCents - subtotalCents : null
+  const taxCents = data.taxCents
+  const aggregate = totalPaidCents != null ? totalPaidCents - subtotalCents : null
+  const adjustment = aggregate != null && taxCents != null ? aggregate - taxCents : null
 
   return (
     <div className="mx-auto flex max-w-md flex-col gap-4 p-5">
@@ -40,12 +42,14 @@ export default function SharedView() {
           <span className="text-[var(--color-ink-soft)]">Subtotal</span>
           <span>{formatCents(subtotalCents)}</span>
         </div>
-        {taxTip != null && (
+        {taxCents != null && (
           <div className="flex justify-between border-t border-dashed border-[var(--color-border)] pt-1">
-            <span className="text-[var(--color-ink-soft)]">{taxTip >= 0 ? 'Taxes & tip' : 'Discount'}</span>
-            <span>{formatCents(taxTip)}</span>
+            <span className="text-[var(--color-ink-soft)]">Tax</span>
+            <span>{formatCents(taxCents)}</span>
           </div>
         )}
+        {taxCents == null && aggregate != null && aggregate !== 0 && <ReceiptDelta cents={aggregate} />}
+        {adjustment != null && adjustment !== 0 && <ReceiptDelta cents={adjustment} />}
         <div className="flex justify-between border-t border-dashed border-[var(--color-border)] pt-1 text-base font-semibold">
           <span>Total paid</span>
           <span>{totalPaidCents != null ? formatCents(totalPaidCents) : '—'}</span>
@@ -57,7 +61,15 @@ export default function SharedView() {
           const person = data.people.find((person) => person.id === p.personId)
           if (!person) return null
           return canExpand ? (
-            <PersonBreakdownCard key={p.personId} person={person} owedCents={p.owedCents} dishes={dishes} portions={portions} defaultOpen={i === 0} />
+            <PersonBreakdownCard
+              key={p.personId}
+              person={person}
+              owedCents={p.owedCents}
+              taxCents={p.taxCents}
+              dishes={dishes}
+              portions={portions}
+              defaultOpen={i === 0}
+            />
           ) : (
             <div key={p.personId} className="flex items-center justify-between rounded-xl border border-[var(--color-border)] bg-[var(--color-paper)] p-4">
               <span className="font-medium">{person.name}</span>
@@ -66,6 +78,13 @@ export default function SharedView() {
           )
         })}
       </div>
+      {(data.result.unallocatedTaxCents > 0 || data.result.taxDetailsIncomplete) && (
+        <p className="text-sm text-[var(--color-warn)]">
+          {data.result.unallocatedTaxCents > 0
+            ? `${formatCents(data.result.unallocatedTaxCents)} tax is unallocated.`
+            : 'Tax details are incomplete.'}
+        </p>
+      )}
 
       {data.hasReceipt && (
         <div className="flex justify-center">
@@ -74,6 +93,15 @@ export default function SharedView() {
       )}
 
       <footer className="py-6 text-center text-xs text-neutral-400">Split with Share</footer>
+    </div>
+  )
+}
+
+function ReceiptDelta({ cents }: { cents: number }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-[var(--color-ink-soft)]">{cents < 0 ? 'Discount' : 'Adjustment'}</span>
+      <span>{formatCents(cents)}</span>
     </div>
   )
 }

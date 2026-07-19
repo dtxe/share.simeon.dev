@@ -11,6 +11,7 @@ export interface SessionSummary {
   restaurantName: string | null
   billDate: string | null
   subtotalCents: number
+  taxCents: number | null
   totalPaidCents: number | null
   hasReceipt: boolean
   createdAt: string
@@ -31,6 +32,7 @@ export interface Dish {
   unitPriceCents: number
   sortOrder: number
   source: 'manual' | 'llm_extracted'
+  taxable: boolean
 }
 
 export interface Portion {
@@ -41,8 +43,10 @@ export interface Portion {
 
 export interface BreakdownResult {
   subtotalCents: number
-  people: { personId: string; owedCents: number }[]
+  people: { personId: string; owedCents: number; taxCents: number }[]
   unassignedDishIds: string[] | null
+  unallocatedTaxCents: number
+  taxDetailsIncomplete: boolean
 }
 
 export interface SessionDetail {
@@ -132,7 +136,7 @@ export const api = {
   getSession: (id: string) => request<SessionDetail>(`/sessions/${enc(id)}`),
   updateSession: (
     id: string,
-    patch: Partial<{ title: string; restaurantName: string; billDate: string; totalPaidCents: number }>,
+    patch: Partial<{ title: string; restaurantName: string; billDate: string; totalPaidCents: number; taxCents: number | null }>,
   ) => request<void>(`/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   addPerson: (sessionId: string, name: string) =>
@@ -143,11 +147,11 @@ export const api = {
 
   replaceDishes: (
     sessionId: string,
-    dishes: { name: string; unitPriceCents: number; source?: string }[],
+    dishes: { name: string; unitPriceCents: number; source?: string; taxable?: boolean }[],
   ) => request<Dish[]>(`/sessions/${enc(sessionId)}/dishes/bulk`, { method: 'POST', body: JSON.stringify({ dishes }) }),
-  addDish: (sessionId: string, dish: { name: string; unitPriceCents: number }) =>
+  addDish: (sessionId: string, dish: { name: string; unitPriceCents: number; taxable?: boolean }) =>
     request<Dish>(`/sessions/${enc(sessionId)}/dishes`, { method: 'POST', body: JSON.stringify(dish) }),
-  updateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number }>) =>
+  updateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; taxable: boolean }>) =>
     request<void>(`/dishes/${enc(dishId)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
   deleteDish: (dishId: string) => request<void>(`/dishes/${enc(dishId)}`, { method: 'DELETE' }),
 
@@ -191,7 +195,9 @@ export const api = {
       subtotalCents?: number
       tipCents?: number
       totalPaidCents?: number
-      items: { name: string; priceCents: number }[]
+      taxCents?: number
+      multipleTaxRatesDetected?: boolean
+      items: { name: string; priceCents: number; taxable?: boolean }[]
     }>(`/sessions/${enc(sessionId)}/extract`, { method: 'POST' }),
 
   createShare: (sessionId: string) =>
@@ -203,10 +209,11 @@ export const api = {
       restaurantName: string | null
       billDate: string | null
       subtotalCents: number
+      taxCents: number | null
       totalPaidCents: number | null
       hasReceipt: boolean
       people: { id: string; name: string; sortOrder: number }[]
-      dishes?: { id: string; name: string; unitPriceCents: number }[]
+      dishes?: { id: string; name: string; unitPriceCents: number; taxable: boolean }[]
       portions?: { dishId: string; personId: string; shares: number }[]
       result: BreakdownResult
     }>(`/view/${enc(token)}`),

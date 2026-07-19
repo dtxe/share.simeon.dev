@@ -13,6 +13,7 @@ export function AssignSection({
   dishes,
   portions,
   totalForPreview,
+  taxCents,
   onAdjust,
   onSplitEvenly,
 }: {
@@ -20,6 +21,7 @@ export function AssignSection({
   dishes: Dish[]
   portions: Portion[]
   totalForPreview: number
+  taxCents: number | null
   onAdjust: (dishId: string, personId: string, shares: number) => void
   onSplitEvenly: (dishId: string) => void
 }) {
@@ -43,8 +45,8 @@ export function AssignSection({
   }, [portions])
 
   const owedByPerson = useMemo(
-    () => previewOwed(dishes, portions, people.map((p) => p.id), totalForPreview),
-    [dishes, portions, people, totalForPreview],
+    () => previewOwed(dishes, portions, people.map((p) => p.id), totalForPreview, taxCents),
+    [dishes, portions, people, totalForPreview, taxCents],
   )
 
   const unassigned = new Set(unassignedDishIds(dishes, portions))

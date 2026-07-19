@@ -11,27 +11,67 @@ export function previewOwed(
   portions: Portion[],
   peopleIds: string[],
   totalPaidCents: number,
+  taxCents: number | null = null,
 ): Record<string, number> {
   const lineTotal = new Map<string, number>()
   const dishTotalShares = new Map<string, number>()
+  const personShares = new Map<string, Map<string, number>>()
   for (const d of dishes) lineTotal.set(d.id, d.unitPriceCents)
-  for (const p of portions) dishTotalShares.set(p.dishId, (dishTotalShares.get(p.dishId) ?? 0) + p.shares)
+  for (const p of portions) {
+    if (!Number.isFinite(p.shares) || p.shares <= 0) continue
+    dishTotalShares.set(p.dishId, (dishTotalShares.get(p.dishId) ?? 0) + p.shares)
+    const shares = personShares.get(p.personId) ?? new Map<string, number>()
+    shares.set(p.dishId, (shares.get(p.dishId) ?? 0) + p.shares)
+    personShares.set(p.personId, shares)
+  }
 
   let subtotal = 0
   for (const total of lineTotal.values()) subtotal += total
 
-  const raw = new Map<string, number>()
-  for (const id of peopleIds) raw.set(id, 0)
-  for (const p of portions) {
-    const total = dishTotalShares.get(p.dishId) ?? 0
-    if (total <= 0) continue
-    const dishValue = lineTotal.get(p.dishId) ?? 0
-    raw.set(p.personId, (raw.get(p.personId) ?? 0) + (p.shares / total) * dishValue)
+  const raw = new Map<string, number>(peopleIds.map((id) => [id, 0]))
+  if (taxCents == null) {
+    const scale = subtotal > 0 ? totalPaidCents / subtotal : 0
+    for (const id of peopleIds) {
+      for (const dish of dishes) {
+        const total = dishTotalShares.get(dish.id) ?? 0
+        if (total <= 0) continue
+        const shares = personShares.get(id)?.get(dish.id) ?? 0
+        raw.set(id, (raw.get(id) ?? 0) + (shares / total) * dish.unitPriceCents * scale)
+      }
+    }
+  } else {
+    const taxableSubtotal = dishes.reduce((n, d) => n + (d.taxable ? (lineTotal.get(d.id) ?? 0) : 0), 0)
+    const residual = totalPaidCents - subtotal - taxCents
+    for (const id of peopleIds) {
+      for (const dish of dishes) {
+        const total = dishTotalShares.get(dish.id) ?? 0
+        if (total <= 0) continue
+        const shares = personShares.get(id)?.get(dish.id) ?? 0
+        const line = lineTotal.get(dish.id) ?? 0
+        const tax = dish.taxable && taxableSubtotal > 0 ? (taxCents * line) / taxableSubtotal : 0
+        const adjusted = line + tax + (subtotal > 0 ? (residual * line) / subtotal : 0)
+        raw.set(id, (raw.get(id) ?? 0) + (shares / total) * adjusted)
+      }
+    }
   }
+  return roundAllocation(raw, peopleIds)
+}
 
-  const scale = subtotal > 0 ? totalPaidCents / subtotal : 0
+function roundAllocation(values: Map<string, number>, ids: string[]): Record<string, number> {
   const out: Record<string, number> = {}
-  for (const id of peopleIds) out[id] = Math.round((raw.get(id) ?? 0) * scale)
+  const remainders = ids.map((id, index) => {
+    const value = values.get(id) ?? 0
+    const floor = Math.floor(value)
+    out[id] = floor
+    return { id, index, fraction: value - floor }
+  })
+  const target = Math.round(ids.reduce((sum, id) => sum + (values.get(id) ?? 0), 0))
+  let remaining = target - ids.reduce((sum, id) => sum + out[id], 0)
+  remainders.sort((a, b) => b.fraction - a.fraction || a.index - b.index)
+  for (let i = 0; remaining > 0 && remainders.length > 0; i += 1) {
+    out[remainders[i % remainders.length].id] += 1
+    remaining -= 1
+  }
   return out
 }
 

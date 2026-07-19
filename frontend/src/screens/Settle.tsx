@@ -48,7 +48,9 @@ export default function SettleScreen() {
 
   const subtotalCents = session?.subtotalCents ?? 0
   const totalPaidCents = session?.totalPaidCents ?? null
-  const taxTip = totalPaidCents != null ? totalPaidCents - subtotalCents : null
+  const taxCents = session?.taxCents ?? null
+  const aggregate = totalPaidCents != null ? totalPaidCents - subtotalCents : null
+  const adjustment = aggregate != null && taxCents != null ? aggregate - taxCents : null
 
   const suggestion = session
     ? [session.restaurantName, session.billDate ? new Date(session.billDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : null]
@@ -71,12 +73,16 @@ export default function SettleScreen() {
           <span className="text-[var(--color-ink-soft)]">Subtotal</span>
           <span>{formatCents(subtotalCents)}</span>
         </div>
-        {taxTip != null && (
+        {taxCents != null && (
           <div className="flex justify-between border-t border-dashed border-[var(--color-border)] pt-1">
-            <span className="text-[var(--color-ink-soft)]">{taxTip >= 0 ? 'Taxes & tip' : 'Discount'}</span>
-            <span>{formatCents(taxTip)}</span>
+            <span className="text-[var(--color-ink-soft)]">Tax</span>
+            <span>{formatCents(taxCents)}</span>
           </div>
         )}
+        {taxCents == null && aggregate != null && aggregate !== 0 && (
+          <ReceiptDelta cents={aggregate} />
+        )}
+        {adjustment != null && adjustment !== 0 && <ReceiptDelta cents={adjustment} />}
         <div className="flex justify-between border-t border-dashed border-[var(--color-border)] pt-1 text-base font-semibold">
           <span>Total paid</span>
           <span>{totalPaidCents != null ? formatCents(totalPaidCents) : '—'}</span>
@@ -95,10 +101,28 @@ export default function SettleScreen() {
 
       <div className="flex flex-col gap-2">
         {people.map((p, i) => {
-          const owed = result?.people.find((r) => r.personId === p.id)?.owedCents ?? 0
-          return <PersonBreakdownCard key={p.id} person={p} owedCents={owed} dishes={dishes} portions={portions} defaultOpen={i === 0} />
+          const personResult = result?.people.find((r) => r.personId === p.id)
+          const owed = personResult?.owedCents ?? 0
+          return (
+            <PersonBreakdownCard
+              key={p.id}
+              person={p}
+              owedCents={owed}
+              taxCents={personResult?.taxCents ?? 0}
+              dishes={dishes}
+              portions={portions}
+              defaultOpen={i === 0}
+            />
+          )
         })}
       </div>
+      {result && (result.unallocatedTaxCents > 0 || result.taxDetailsIncomplete) && (
+        <p className="text-sm text-[var(--color-warn)]">
+          {result.unallocatedTaxCents > 0
+            ? `${formatCents(result.unallocatedTaxCents)} tax is unallocated.`
+            : 'Tax details are incomplete.'}
+        </p>
+      )}
 
       {session?.hasReceipt && id && (
         <div className="flex justify-center">
@@ -116,6 +140,15 @@ export default function SettleScreen() {
       </div>
 
       <ShareLinkDrawer open={shareOpen} onOpenChange={setShareOpen} shareUrl={shareUrl} />
+    </div>
+  )
+}
+
+function ReceiptDelta({ cents }: { cents: number }) {
+  return (
+    <div className="flex justify-between">
+      <span className="text-[var(--color-ink-soft)]">{cents < 0 ? 'Discount' : 'Adjustment'}</span>
+      <span>{formatCents(cents)}</span>
     </div>
   )
 }

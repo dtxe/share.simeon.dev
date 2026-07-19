@@ -18,12 +18,14 @@ interface BreakdownPortion {
 export function PersonBreakdownCard({
   person,
   owedCents,
+  taxCents,
   dishes,
   portions,
   defaultOpen = false,
 }: {
   person: { id: string; name: string; sortOrder: number }
   owedCents: number
+  taxCents: number
   dishes: BreakdownDish[]
   portions: BreakdownPortion[]
   defaultOpen?: boolean
@@ -44,7 +46,7 @@ export function PersonBreakdownCard({
     baseSum += base
     lines.push({ label: d.name, pct: `${formatShare(mine)}/${formatShare(total)} = ${Math.round((mine / total) * 100)}%`, cents: base })
   }
-  const taxTip = owedCents - baseSum
+  const adjustment = owedCents - baseSum - taxCents
 
   return (
     <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-paper)]">
@@ -72,11 +74,18 @@ export function PersonBreakdownCard({
               <span>{formatCents(line.cents)}</span>
             </div>
           ))}
-          {Math.abs(taxTip) >= 1 && (
+          {taxCents !== 0 && (
             <div className="flex items-center justify-between gap-2 py-0.5 text-[var(--color-ink-soft)]">
               <span />
-              <span className="flex-1 truncate px-2">{taxTip >= 0 ? 'Taxes and tip' : 'Discount'}</span>
-              <span>{formatCents(taxTip)}</span>
+              <span className="flex-1 truncate px-2">Tax</span>
+              <span>{formatCents(taxCents)}</span>
+            </div>
+          )}
+          {adjustment !== 0 && (
+            <div className="flex items-center justify-between gap-2 py-0.5 text-[var(--color-ink-soft)]">
+              <span />
+              <span className="flex-1 truncate px-2">{adjustment > 0 ? 'Adjustment' : 'Discount'}</span>
+              <span>{formatCents(adjustment)}</span>
             </div>
           )}
           <div className="mt-1 flex items-center justify-between gap-2 border-t border-dashed border-[var(--color-border)] pt-1 font-semibold">

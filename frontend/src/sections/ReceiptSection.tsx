@@ -16,6 +16,7 @@ export function ReceiptSection({
   stage,
   error,
   retryable,
+  warning,
   onUpload,
   onAddDish,
   onUpdateDish,
@@ -29,9 +30,10 @@ export function ReceiptSection({
   stage: ReceiptStage
   error: string | null
   retryable: boolean
+  warning: string | null
   onUpload: (file: File) => Promise<void>
-  onAddDish: (dish: { name: string; unitPriceCents: number }) => Promise<void>
-  onUpdateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number }>) => Promise<void>
+  onAddDish: (dish: { name: string; unitPriceCents: number; taxable?: boolean }) => Promise<void>
+  onUpdateDish: (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; taxable: boolean }>) => Promise<void>
   onDeleteDish: (dishId: string) => Promise<void>
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -111,6 +113,7 @@ export function ReceiptSection({
       )}
 
       {error && <p className="text-sm text-[var(--color-warn)]">{error}</p>}
+      {warning && <p className="text-sm text-[var(--color-warn)]">{warning}</p>}
 
       <div className="flex flex-col divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-white">
         {stage === 'parsing' && dishes.length === 0 ? (
@@ -152,7 +155,7 @@ function DishEditorRow({
   onDelete,
 }: {
   dish: Dish
-  onUpdate: (patch: Partial<{ name: string; unitPriceCents: number }>) => Promise<void>
+  onUpdate: (patch: Partial<{ name: string; unitPriceCents: number; taxable: boolean }>) => Promise<void>
   onDelete: () => Promise<void>
 }) {
   const [name, setName] = useState(dish.name)
@@ -176,6 +179,10 @@ function DishEditorRow({
         placeholder="Item name"
         className="min-w-0 flex-1 border-none bg-transparent focus:outline-none"
       />
+      <label className="flex shrink-0 items-center gap-1 text-xs text-[var(--color-ink-soft)]">
+        <input type="checkbox" checked={dish.taxable} onChange={(e) => void onUpdate({ taxable: e.target.checked })} />
+        Tax
+      </label>
       <input
         value={priceDollars}
         onChange={(e) => setPriceDollars(e.target.value)}
@@ -191,7 +198,7 @@ function DishEditorRow({
   )
 }
 
-function AddDishRow({ onAdd }: { onAdd: (dish: { name: string; unitPriceCents: number }) => Promise<void> }) {
+function AddDishRow({ onAdd }: { onAdd: (dish: { name: string; unitPriceCents: number; taxable?: boolean }) => Promise<void> }) {
   const [name, setName] = useState('')
   const [priceDollars, setPriceDollars] = useState('')
   // Guards against both a premature submit while the user is still tabbing
@@ -208,7 +215,7 @@ function AddDishRow({ onAdd }: { onAdd: (dish: { name: string; unitPriceCents: n
     setName('')
     setPriceDollars('')
     try {
-      await onAdd({ name: trimmedName, unitPriceCents: cents })
+      await onAdd({ name: trimmedName, unitPriceCents: cents, taxable: true })
     } finally {
       submittingRef.current = false
     }

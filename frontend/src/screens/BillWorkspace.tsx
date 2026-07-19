@@ -20,8 +20,8 @@ const EMPTY_PORTIONS: Portion[] = []
 
 type SectionId = 'receipt' | 'people' | 'total' | 'assign'
 const SECTION_ORDER: SectionId[] = ['receipt', 'people', 'total', 'assign']
-type ReceiptFlow = { stage: ReceiptStage; error: string | null; retryable: boolean }
-const IDLE_RECEIPT_FLOW: ReceiptFlow = { stage: 'idle', error: null, retryable: false }
+type ReceiptFlow = { stage: ReceiptStage; error: string | null; retryable: boolean; warning: string | null }
+const IDLE_RECEIPT_FLOW: ReceiptFlow = { stage: 'idle', error: null, retryable: false, warning: null }
 
 function extractErrorMessage(err: unknown): string {
   if (err instanceof ApiError && err.status === 429) {
@@ -148,39 +148,54 @@ export default function BillWorkspace() {
     let id: string | null = null
     let phase: 'upload' | 'extract' = 'upload'
 
-    setReceiptFlow(currentKey, { stage: 'uploading', error: null, retryable: false })
+    setReceiptFlow(currentKey, { stage: 'uploading', error: null, retryable: false, warning: null })
     try {
       const uploadable = await toUploadableImage(file)
       if (!uploadable) {
-        setReceiptFlow(currentKey, { stage: 'failed', error: 'Could not read this photo. Try a JPEG or PNG instead.', retryable: true })
+        setReceiptFlow(currentKey, {
+          stage: 'failed',
+          error: 'Could not read this photo. Try a JPEG or PNG instead.',
+          retryable: true,
+          warning: null,
+        })
         return
       }
 
       console.log('[receipt] uploadable ready', { inputType: file.type, inputSize: file.size, inputName: file.name, outputType: uploadable.type, outputSize: uploadable.size })
 
       id = await ensure()
-      setReceiptFlow(id, { stage: 'uploading', error: null, retryable: false })
+      setReceiptFlow(id, { stage: 'uploading', error: null, retryable: false, warning: null })
 
       await api.uploadReceipt(id, uploadable)
       invalidate(id)
 
       phase = 'extract'
-      setReceiptFlow(id, { stage: 'parsing', error: null, retryable: false })
+      setReceiptFlow(id, { stage: 'parsing', error: null, retryable: false, warning: null })
       const result = await api.extract(id)
       invalidate(id)
-      setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null, retryable: false })
+      setReceiptFlow(id, {
+        stage: 'done',
+        error: result.items.length === 0 ? 'No items detected — add them below.' : null,
+        retryable: false,
+        warning: result.multipleTaxRatesDetected ? 'Multiple tax rates detected — item tax is approximate.' : null,
+      })
     } catch (err) {
       console.error('[receipt] upload failed', { phase, inputType: file.type, inputSize: file.size, inputName: file.name, error: err })
-      setReceiptFlow(id ?? currentKey, { stage: 'failed', error: phase === 'upload' ? uploadErrorMessage(err) : extractErrorMessage(err), retryable: phase === 'extract' ? !isExtractRefused(err) : true })
+      setReceiptFlow(id ?? currentKey, {
+        stage: 'failed',
+        error: phase === 'upload' ? uploadErrorMessage(err) : extractErrorMessage(err),
+        retryable: phase === 'extract' ? !isExtractRefused(err) : true,
+        warning: null,
+      })
     }
   }
 
-  const addDish = async (dish: { name: string; unitPriceCents: number }) => {
+  const addDish = async (dish: { name: string; unitPriceCents: number; taxable?: boolean }) => {
     const id = await ensure()
     await api.addDish(id, dish)
     invalidate(id)
   }
-  const updateDish = async (dishId: string, patch: Partial<{ name: string; unitPriceCents: number }>) => {
+  const updateDish = async (dishId: string, patch: Partial<{ name: string; unitPriceCents: number; taxable: boolean }>) => {
     await api.updateDish(dishId, patch)
     if (routeId) invalidate(routeId)
   }
@@ -214,6 +229,11 @@ export default function BillWorkspace() {
   const saveTotalPaid = async (cents: number) => {
     const id = await ensure()
     await api.updateSession(id, { totalPaidCents: cents })
+    invalidate(id)
+  }
+  const saveTax = async (cents: number | null) => {
+    const id = await ensure()
+    await api.updateSession(id, { taxCents: cents })
     invalidate(id)
   }
 
@@ -287,6 +307,7 @@ export default function BillWorkspace() {
           stage={receiptFlow.stage}
           error={receiptFlow.error}
           retryable={receiptFlow.retryable}
+          warning={receiptFlow.warning}
           onUpload={uploadReceipt}
           onAddDish={addDish}
           onUpdateDish={updateDish}
@@ -321,9 +342,11 @@ export default function BillWorkspace() {
       >
         <TotalPaidSection
           subtotalCents={session?.subtotalCents ?? 0}
+          taxCents={session?.taxCents ?? null}
           totalPaidCents={session?.totalPaidCents ?? null}
           fromReceipt={dishes.some((d) => d.source === 'llm_extracted')}
           onSave={saveTotalPaid}
+          onSaveTax={saveTax}
         />
       </Section>
 
@@ -339,7 +362,8 @@ export default function BillWorkspace() {
           people={people}
           dishes={dishes}
           portions={portions}
-          totalForPreview={session?.totalPaidCents ?? session?.subtotalCents ?? 0}
+          totalForPreview={session?.totalPaidCents ?? ((session?.subtotalCents ?? 0) + (session?.taxCents ?? 0))}
+          taxCents={session?.taxCents ?? null}
           onAdjust={adjust}
           onSplitEvenly={splitEvenly}
         />
