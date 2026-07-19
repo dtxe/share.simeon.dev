@@ -598,14 +598,14 @@ func (s *Store) GetBreakdownByViewToken(ctx context.Context, rawToken string) (*
 }
 
 func (s *Store) computeBreakdown(ctx context.Context, sess *BillSession) (*BillSession, split.Result, error) {
-	dishRows, err := s.Pool.Query(ctx, `SELECT id::text, unit_price_cents, quantity FROM dishes WHERE session_id = $1`, sess.ID)
+	dishRows, err := s.Pool.Query(ctx, `SELECT id::text, unit_price_cents, quantity, taxable FROM dishes WHERE session_id = $1 ORDER BY sort_order, id`, sess.ID)
 	if err != nil {
 		return nil, split.Result{}, err
 	}
 	var dishes []split.Dish
 	for dishRows.Next() {
 		var d split.Dish
-		if err := dishRows.Scan(&d.ID, &d.UnitPriceCents, &d.Quantity); err != nil {
+		if err := dishRows.Scan(&d.ID, &d.UnitPriceCents, &d.Quantity, &d.Taxable); err != nil {
 			dishRows.Close()
 			return nil, split.Result{}, err
 		}
@@ -638,6 +638,7 @@ func (s *Store) computeBreakdown(ctx context.Context, sess *BillSession) (*BillS
 		SELECT portions.dish_id::text, portions.person_id::text, portions.shares
 		FROM portions JOIN dishes ON dishes.id = portions.dish_id
 		WHERE dishes.session_id = $1
+		ORDER BY dishes.sort_order, portions.person_id
 	`, sess.ID)
 	if err != nil {
 		return nil, split.Result{}, err
@@ -661,7 +662,7 @@ func (s *Store) computeBreakdown(ctx context.Context, sess *BillSession) (*BillS
 		totalPaid = *sess.TotalPaidCents
 	}
 
-	return sess, split.Compute(dishes, portions, peopleIDs, totalPaid), nil
+	return sess, split.Compute(dishes, portions, peopleIDs, totalPaid, sess.TaxCents), nil
 }
 
 func (s *Store) ListPortions(ctx context.Context, sessionID, ownerUserID string) ([]Portion, error) {
