@@ -6,7 +6,7 @@ import { ProfileDrawer } from './ProfileDrawer'
 export function AppHeader() {
   const [profileOpen, setProfileOpen] = useState(false)
   return (
-    <header className="flex items-center justify-between px-1 py-3">
+    <header className="flex items-center justify-between py-3">
       <Link href="/" className="text-lg font-semibold">
         Share
       </Link>
