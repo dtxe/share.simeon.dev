@@ -302,7 +302,7 @@ func Load() (*Config, error) {
 		LLMModel:                   getEnv("LLM_MODEL", defaultLLMModel),
 		LLMAPIKey:                  getEnv("LLM_API_KEY", ""),
 		LLMDailySpendCapCents:      getInt("LLM_DAILY_SPEND_CAP_CENTS", 100),
-		LLMMaxSpendPerReceiptCents: getInt("LLM_MAX_SPEND_PER_RECEIPT_CENTS", 5),
+		LLMMaxSpendPerReceiptCents: getInt("LLM_MAX_SPEND_PER_RECEIPT_CENTS", 8),
 
 		ExtractionStrategy: getEnv("EXTRACTION_STRATEGY", "baseline"),
 

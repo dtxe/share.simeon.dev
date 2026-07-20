@@ -14,7 +14,9 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"share/backend/internal/llm"
@@ -32,14 +34,17 @@ Where a pre-tax subtotal is printed, verify that the sum of each item's priceCen
 quantity equals subtotalCents. If they don't match, re-read the item lines and the subtotal line and
 correct whichever was misread — the most common error is recording the line total (unit price times
 quantity) as priceCents instead of the per-item unit price.
+You may use the interim_calculation calculator to verify the subtotal before returning the extraction.
 Call the extract_receipt function with the result — do not respond in plain text.`
 
 const minimizeReasoningPromptSuffix = `Minimize thinking: use only the reasoning needed to read the receipt, then call the extract_receipt function directly.`
 
 const (
 	extractFunctionName             = "extract_receipt"
-	extractionMaxTokens             = 4000
-	extractionReasoningBudgetTokens = extractionMaxTokens / 2
+	interimCalculationFunctionName  = "interim_calculation"
+	promptCacheKey                  = "share-receipt-extraction-v1"
+	extractionMaxTokens             = 6000
+	extractionReasoningBudgetTokens = 4000
 	kimiK2P7CodeModel               = "accounts/fireworks/models/kimi-k2p7-code"
 	minimaxM3Model                  = "accounts/fireworks/models/minimax-m3"
 )
@@ -108,6 +113,24 @@ type functionDef struct {
 type toolChoice struct {
 	Type     string           `json:"type"`
 	Function toolChoiceTarget `json:"function"`
+	Required bool             `json:"-"`
+}
+
+func (c toolChoice) MarshalJSON() ([]byte, error) {
+	if c.Required {
+		return json.Marshal("required")
+	}
+	type alias toolChoice
+	return json.Marshal(alias(c))
+}
+
+func (c *toolChoice) UnmarshalJSON(data []byte) error {
+	if string(data) == `"required"` {
+		c.Required = true
+		return nil
+	}
+	type alias toolChoice
+	return json.Unmarshal(data, (*alias)(c))
 }
 
 type toolChoiceTarget struct {
@@ -120,12 +143,13 @@ type thinkingConfig struct {
 }
 
 type chatRequest struct {
-	Model      string          `json:"model"`
-	Messages   []chatMessage   `json:"messages"`
-	Tools      []toolDef       `json:"tools"`
-	ToolChoice toolChoice      `json:"tool_choice"`
-	Thinking   *thinkingConfig `json:"thinking,omitempty"`
-	MaxTokens  int             `json:"max_tokens"`
+	Model          string          `json:"model"`
+	Messages       []chatMessage   `json:"messages"`
+	Tools          []toolDef       `json:"tools"`
+	ToolChoice     toolChoice      `json:"tool_choice"`
+	PromptCacheKey string          `json:"prompt_cache_key"`
+	Thinking       *thinkingConfig `json:"thinking,omitempty"`
+	MaxTokens      int             `json:"max_tokens"`
 }
 
 type chatResponse struct {
@@ -291,47 +315,109 @@ func (c *Client) ExtractWithSchema(ctx context.Context, image []byte, mimeType, 
 // call, single- or multi-turn — only the messages, schema, and thinking
 // budget differ between callers.
 func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema map[string]any, thinkingBudgetTokens int) (toolCallID string, args json.RawMessage, usage llm.Usage, err error) {
-	reqBody := chatRequest{
-		Model:    c.Model,
-		Messages: messages,
-		Tools: []toolDef{
-			{
-				Type: "function",
-				Function: functionDef{
-					Name:       extractFunctionName,
-					Parameters: schema,
+	tools := extractionTools(schema)
+	first, usage, err := c.chat(ctx, messages, tools, toolChoice{Required: true}, thinkingBudgetTokens)
+	if err != nil {
+		return "", nil, usage, err
+	}
+	if len(first.Choices[0].Message.ToolCalls) == 0 {
+		return "", nil, usage, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", first.Choices[0].Message.Content)
+	}
+	call := first.Choices[0].Message.ToolCalls[0]
+	if call.Function.Name == extractFunctionName {
+		return normalizedToolCallID(call.ID), json.RawMessage(call.Function.Arguments), usage, nil
+	}
+	if call.Function.Name != interimCalculationFunctionName {
+		return "", nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
+	}
+	calculation, err := calculateInterim(call.Function.Arguments)
+	if err != nil {
+		return "", nil, usage, err
+	}
+	callID := normalizedToolCallID(call.ID)
+	messages = append(messages,
+		chatMessage{Role: "assistant", ToolCalls: []toolCallOut{{
+			ID: callID, Type: "function", Function: call.Function,
+		}}},
+		chatMessage{Role: "tool", ToolCallID: callID, Content: []contentPart{{Type: "text", Text: calculation}}},
+	)
+	final, finalUsage, err := c.chat(ctx, messages, tools, toolChoice{Type: "function", Function: toolChoiceTarget{Name: extractFunctionName}}, thinkingBudgetTokens)
+	usage.PromptTokens += finalUsage.PromptTokens
+	usage.CompletionTokens += finalUsage.CompletionTokens
+	if err != nil {
+		return "", nil, usage, err
+	}
+	if len(final.Choices[0].Message.ToolCalls) == 0 {
+		return "", nil, usage, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", final.Choices[0].Message.Content)
+	}
+	finalCall := final.Choices[0].Message.ToolCalls[0]
+	if finalCall.Function.Name != extractFunctionName {
+		return "", nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q", finalCall.Function.Name)
+	}
+	return normalizedToolCallID(finalCall.ID), json.RawMessage(finalCall.Function.Arguments), usage, nil
+}
+
+func extractionTools(schema map[string]any) []toolDef {
+	calculatorSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"item": map[string]any{
+				"type": "array",
+				"items": map[string]any{
+					"type": "object",
+					"properties": map[string]any{
+						"p": map[string]any{"type": "integer", "description": "price in cents"},
+						"n": map[string]any{"type": "number", "description": "quantity"},
+					},
+					"required":             []string{"p", "n"},
+					"additionalProperties": false,
 				},
 			},
 		},
-		ToolChoice: toolChoice{
-			Type:     "function",
-			Function: toolChoiceTarget{Name: extractFunctionName},
-		},
-		Thinking:  thinkingConfigForModel(c.Model, thinkingBudgetTokens),
-		MaxTokens: extractionMaxTokens,
+		"required":             []string{"item"},
+		"additionalProperties": false,
 	}
+	return []toolDef{
+		{Type: "function", Function: functionDef{Name: extractFunctionName, Parameters: schema}},
+		{Type: "function", Function: functionDef{
+			Name:        interimCalculationFunctionName,
+			Description: "Calculate the receipt subtotal from item prices and quantities.",
+			Parameters:  calculatorSchema,
+		}},
+	}
+}
 
+func (c *Client) chat(ctx context.Context, messages []chatMessage, tools []toolDef, choice toolChoice, thinkingBudgetTokens int) (chatResponse, llm.Usage, error) {
+	reqBody := chatRequest{
+		Model:          c.Model,
+		Messages:       messages,
+		Tools:          tools,
+		ToolChoice:     choice,
+		PromptCacheKey: promptCacheKey,
+		Thinking:       thinkingConfigForModel(c.Model, thinkingBudgetTokens),
+		MaxTokens:      extractionMaxTokens,
+	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: marshal request: %w", err)
+		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: build request: %w", err)
+		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
-		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: request failed: %w", err)
+		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
-		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: reading response: %w", err)
+		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: reading response: %w", err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -343,18 +429,18 @@ func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema m
 		if len(snippet) > 500 {
 			snippet = snippet[:500]
 		}
-		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
+		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
 	}
 
 	var chatResp chatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: decoding response envelope: %w", err)
+		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: decoding response envelope: %w", err)
 	}
 	if len(chatResp.Choices) == 0 {
-		return "", nil, llm.Usage{}, fmt.Errorf("openaicompat: no choices in response")
+		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: no choices in response")
 	}
 
-	usage = llm.Usage{
+	usage := llm.Usage{
 		PromptTokens:     chatResp.Usage.PromptTokens,
 		CompletionTokens: chatResp.Usage.CompletionTokens,
 	}
@@ -364,22 +450,60 @@ func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema m
 			c.Model, chatResp.Usage.CompletionTokens, thinkingBudgetTokens)
 	}
 
-	msg := chatResp.Choices[0].Message
-	if len(msg.ToolCalls) == 0 {
-		return "", nil, usage, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", msg.Content)
-	}
-	call := msg.ToolCalls[0]
-	if call.Function.Name != extractFunctionName {
-		return "", nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
-	}
-	id := call.ID
-	if id == "" {
-		// Every provider we support sets this, but fall back rather than
-		// leaving a follow-up turn's tool_call_id empty if one doesn't.
-		id = extractFunctionName + "_call"
-	}
+	return chatResp, usage, nil
+}
 
-	return id, json.RawMessage(call.Function.Arguments), usage, nil
+func normalizedToolCallID(id string) string {
+	if id == "" {
+		return extractFunctionName + "_call"
+	}
+	return id
+}
+
+type interimCalculationInput struct {
+	Item []interimCalculationItem `json:"item"`
+}
+
+type interimCalculationItem struct {
+	Price    *int64   `json:"p"`
+	Quantity *float64 `json:"n"`
+}
+
+func calculateInterim(raw string) (string, error) {
+	var input interimCalculationInput
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&input); err != nil {
+		return "", fmt.Errorf("openaicompat: invalid interim_calculation arguments: %w", err)
+	}
+	var trailing any
+	if err := dec.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return "", fmt.Errorf("openaicompat: invalid interim_calculation arguments: trailing JSON")
+		}
+		return "", fmt.Errorf("openaicompat: invalid interim_calculation arguments: %w", err)
+	}
+	var subtotal int64
+	for _, item := range input.Item {
+		if item.Price == nil || item.Quantity == nil || *item.Price < 0 || math.IsNaN(*item.Quantity) || math.IsInf(*item.Quantity, 0) {
+			return "", fmt.Errorf("openaicompat: invalid interim_calculation item")
+		}
+		qty := *item.Quantity
+		if qty <= 0 {
+			qty = 1
+		}
+		value := math.Round(float64(*item.Price) * qty)
+		if value < 0 || value >= float64(math.MaxInt64) {
+			return "", fmt.Errorf("openaicompat: interim_calculation overflow")
+		}
+		lineTotal := int64(value)
+		if subtotal > math.MaxInt64-lineTotal {
+			return "", fmt.Errorf("openaicompat: interim_calculation overflow")
+		}
+		subtotal += lineTotal
+	}
+	result, _ := json.Marshal(map[string]int64{"subtotalCents": subtotal})
+	return string(result), nil
 }
 
 func extractionPromptForModel(model string) string {

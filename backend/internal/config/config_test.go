@@ -138,8 +138,8 @@ func TestLoadDefaultsReceiptSpendCap(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.LLMMaxSpendPerReceiptCents != 5 {
-		t.Fatalf("LLMMaxSpendPerReceiptCents = %d, want 5", cfg.LLMMaxSpendPerReceiptCents)
+	if cfg.LLMMaxSpendPerReceiptCents != 8 {
+		t.Fatalf("LLMMaxSpendPerReceiptCents = %d, want 8", cfg.LLMMaxSpendPerReceiptCents)
 	}
 }
 

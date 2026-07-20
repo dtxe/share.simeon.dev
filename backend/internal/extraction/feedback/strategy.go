@@ -2,9 +2,10 @@
 // docs/plans/02-strategy-feedback-retry.md: the first call is today's
 // baseline pipeline unchanged (same prompt/schema/thinking budget). If the
 // extracted subtotal doesn't reconcile against the sum of its items, a
-// second call replays the first attempt as real conversation history and
+// second operation replays the first attempt as real conversation history and
 // points the model at the specific arithmetic discrepancy, asking it to
-// re-examine the image and correct it. MaxCalls() == 2 — the second call
+// re-examine the image and correct it. MaxCalls() == 4 — each operation can
+// make an initial and calculator-final call; the second operation
 // only fires when the first one's subtotal check fails, so cost on the
 // common (already-correct) case matches baseline.
 package feedback
@@ -39,7 +40,7 @@ func New(client *openaicompat.Client, providerName, modelName string, inputCostP
 
 func (s *Strategy) Name() string { return "feedback_retry" }
 
-func (s *Strategy) MaxCalls() int { return 2 }
+func (s *Strategy) MaxCalls() int { return 4 }
 
 func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (extraction.RunResult, error) {
 	first, err := s.Client.ExtractReceiptAttempt(ctx, image, mimeType)

@@ -13,16 +13,29 @@ import (
 func TestExtractReceiptParsesResponse(t *testing.T) {
 	var gotAuth, gotModel string
 	var gotBody chatRequest
+	var gotRaw map[string]any
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotAuth = r.Header.Get("Authorization")
-		if err := json.NewDecoder(r.Body).Decode(&gotBody); err != nil {
+		body, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Errorf("reading request body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotBody); err != nil {
 			t.Errorf("decoding request body: %v", err)
+		}
+		if err := json.Unmarshal(body, &gotRaw); err != nil {
+			t.Errorf("decoding raw request body: %v", err)
 		}
 		gotModel = gotBody.Model
 
-		if gotBody.ToolChoice.Function.Name != extractFunctionName {
-			t.Errorf("expected tool_choice targeting %q, got %q", extractFunctionName, gotBody.ToolChoice.Function.Name)
+		if !gotBody.ToolChoice.Required || len(gotBody.Tools) != 2 || gotBody.Tools[0].Function.Name != extractFunctionName || gotBody.Tools[1].Function.Name != interimCalculationFunctionName {
+			t.Errorf("expected required choice with extraction and calculator tools, got choice=%+v tools=%+v", gotBody.ToolChoice, gotBody.Tools)
+		}
+		calculatorSchema := gotBody.Tools[1].Function.Parameters
+		required, ok := calculatorSchema["required"].([]any)
+		if !ok || len(required) != 1 || required[0] != "item" {
+			t.Errorf("calculator required fields = %#v, want item", calculatorSchema["required"])
 		}
 		if len(gotBody.Messages) != 1 || len(gotBody.Messages[0].Content) != 2 {
 			t.Fatalf("expected one message with text+image_url parts, got %+v", gotBody.Messages)
@@ -62,8 +75,14 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 	if gotModel != "test-model" {
 		t.Errorf("model = %q, want %q", gotModel, "test-model")
 	}
-	if gotBody.MaxTokens != extractionMaxTokens {
-		t.Errorf("max_tokens = %d, want %d", gotBody.MaxTokens, extractionMaxTokens)
+	if gotRaw["tool_choice"] != "required" {
+		t.Errorf("wire tool_choice = %v, want required", gotRaw["tool_choice"])
+	}
+	if gotRaw["prompt_cache_key"] != promptCacheKey {
+		t.Errorf("prompt_cache_key = %v, want %q", gotRaw["prompt_cache_key"], promptCacheKey)
+	}
+	if gotBody.MaxTokens != 6000 {
+		t.Errorf("max_tokens = %d, want 6000", gotBody.MaxTokens)
 	}
 	if result.Receipt.RestaurantName != "Thai Basil" {
 		t.Errorf("restaurant name = %q, want %q", result.Receipt.RestaurantName, "Thai Basil")
@@ -81,6 +100,9 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 }
 
 func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
+	if extractionMaxTokens != 6000 || extractionReasoningBudgetTokens != 4000 || extractionMaxTokens-extractionReasoningBudgetTokens != 2000 {
+		t.Fatalf("token budget invariant changed: max=%d reasoning=%d tool-call capacity=%d", extractionMaxTokens, extractionReasoningBudgetTokens, extractionMaxTokens-extractionReasoningBudgetTokens)
+	}
 	tests := []struct {
 		name                string
 		model               string
@@ -94,14 +116,14 @@ func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
 			model:               kimiK2P7CodeModel,
 			wantThinkingPresent: true,
 			wantThinkingType:    "enabled",
-			wantThinkingBudget:  extractionReasoningBudgetTokens,
+			wantThinkingBudget:  4000,
 		},
 		{
 			name:                "minimax hard reasoning budget",
 			model:               minimaxM3Model,
 			wantThinkingPresent: true,
 			wantThinkingType:    "enabled",
-			wantThinkingBudget:  extractionReasoningBudgetTokens,
+			wantThinkingBudget:  4000,
 		},
 		{
 			name:               "unknown model prompt guidance",
@@ -156,8 +178,8 @@ func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
 					t.Fatalf("thinking.budget_tokens = %v, want %d", gotBudget, tt.wantThinkingBudget)
 				}
 			}
-			if gotBody.MaxTokens != extractionMaxTokens {
-				t.Fatalf("max_tokens = %d, want %d", gotBody.MaxTokens, extractionMaxTokens)
+			if gotBody.MaxTokens != 6000 {
+				t.Fatalf("max_tokens = %d, want 6000", gotBody.MaxTokens)
 			}
 			if len(gotBody.Messages) != 1 || len(gotBody.Messages[0].Content) == 0 {
 				t.Fatalf("expected prompt content, got %+v", gotBody.Messages)
@@ -274,6 +296,90 @@ func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 	_, err := c.ExtractReceipt(context.Background(), []byte("x"), "image/jpeg")
 	if err == nil {
 		t.Fatal("expected decode to reject an unexpected field in the model's JSON output")
+	}
+}
+
+func TestCalculateInterimRoundsEachItemAndDefaultsQuantity(t *testing.T) {
+	got, err := calculateInterim(`{"item":[{"p":100,"n":2.5},{"p":333,"n":0}]}`)
+	if err != nil {
+		t.Fatalf("calculateInterim: %v", err)
+	}
+	if got != `{"subtotalCents":583}` {
+		t.Fatalf("result = %s, want %s", got, `{"subtotalCents":583}`)
+	}
+}
+
+func TestCalculateInterimRejectsInvalidArguments(t *testing.T) {
+	for _, raw := range []string{`{"item":[{"p":1}]}`, `{"item":[{"p":-1,"n":1}]}`, `{"item":[{"p":1,"n":"one"}]}`, `{"item":[{"p":1,"n":1,"x":2}]}`, `{"item":[]} {"extra":true}`} {
+		if _, err := calculateInterim(raw); err == nil {
+			t.Errorf("calculateInterim(%s) accepted invalid arguments", raw)
+		}
+	}
+}
+
+func TestExtractReceiptCalculatorTurn(t *testing.T) {
+	var requests []chatRequest
+	var rawRequests []map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		encoded, err := io.ReadAll(r.Body)
+		if err != nil {
+			t.Fatalf("read request: %v", err)
+		}
+		var body chatRequest
+		if err := json.Unmarshal(encoded, &body); err != nil {
+			t.Fatalf("decode request: %v", err)
+		}
+		requests = append(requests, body)
+		var raw map[string]any
+		if err := json.Unmarshal(encoded, &raw); err != nil {
+			t.Fatalf("decode raw request: %v", err)
+		}
+		rawRequests = append(rawRequests, raw)
+		if len(requests) == 1 {
+			writeToolResponse(t, w, "calc_1", interimCalculationFunctionName, `{"item":[{"p":100,"n":2.5},{"p":333,"n":0}]}`, responseUsage{PromptTokens: 11, CompletionTokens: 7})
+			return
+		}
+		writeToolResponse(t, w, "extract_2", extractFunctionName, `{"restaurantName":"Cafe","subtotalCents":583,"items":[{"name":"Item","priceCents":100,"quantity":2.5}]}`, responseUsage{PromptTokens: 23, CompletionTokens: 13})
+	}))
+	defer srv.Close()
+
+	result, err := New(srv.URL, "test-key", "test-model").ExtractReceipt(context.Background(), []byte("image"), "image/jpeg")
+	if err != nil {
+		t.Fatalf("ExtractReceipt: %v", err)
+	}
+	if len(requests) != 2 {
+		t.Fatalf("upstream calls = %d, want 2", len(requests))
+	}
+	if !requests[0].ToolChoice.Required || requests[1].ToolChoice.Function.Name != extractFunctionName {
+		t.Fatalf("unexpected tool choices: %+v, %+v", requests[0].ToolChoice, requests[1].ToolChoice)
+	}
+	if requests[0].Tools[0].Function.Name != requests[1].Tools[0].Function.Name || requests[0].Tools[1].Function.Name != requests[1].Tools[1].Function.Name {
+		t.Fatalf("tools changed between turns: %+v vs %+v", requests[0].Tools, requests[1].Tools)
+	}
+	if rawRequests[0]["tool_choice"] != "required" || rawRequests[1]["prompt_cache_key"] != promptCacheKey {
+		t.Fatalf("unexpected wire controls: first choice=%v final cache key=%v", rawRequests[0]["tool_choice"], rawRequests[1]["prompt_cache_key"])
+	}
+	if len(requests[1].Messages) != 3 {
+		t.Fatalf("final messages = %d, want user + assistant call + tool result", len(requests[1].Messages))
+	}
+	toolResult := requests[1].Messages[2]
+	if toolResult.Role != "tool" || toolResult.ToolCallID != "calc_1" || len(toolResult.Content) != 1 || toolResult.Content[0].Text != `{"subtotalCents":583}` {
+		t.Fatalf("unexpected calculator result: %+v", toolResult)
+	}
+	if result.Receipt.RestaurantName != "Cafe" || result.Receipt.SubtotalCents != 583 {
+		t.Fatalf("unexpected receipt: %+v", result.Receipt)
+	}
+	if result.Usage.PromptTokens != 34 || result.Usage.CompletionTokens != 20 {
+		t.Fatalf("usage = %+v, want 34 prompt/20 completion", result.Usage)
+	}
+}
+
+func writeToolResponse(t *testing.T, w http.ResponseWriter, id, name, args string, usage responseUsage) {
+	t.Helper()
+	resp := chatResponse{Choices: []responseChoice{{Message: responseMessage{ToolCalls: []responseToolCall{{ID: id, Function: toolCallFunction{Name: name, Arguments: args}}}}, FinishReason: "stop"}}, Usage: usage}
+	w.Header().Set("Content-Type", "application/json")
+	if err := json.NewEncoder(w).Encode(resp); err != nil {
+		t.Errorf("encoding response: %v", err)
 	}
 }
 

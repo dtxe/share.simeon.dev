@@ -1,5 +1,6 @@
 // Package baseline is the strategy-shaped skin around today's extraction
-// behavior: one llm.Provider.ExtractReceipt call, subtotal check reported
+// behavior: one llm.Provider.ExtractReceipt operation (which may use two
+// provider turns for local calculator verification), subtotal check reported
 // via the shared extraction.CheckSubtotal helper. It changes zero behavior
 // versus the pre-strategy code path — it exists to prove the
 // extraction.Strategy abstraction before any real new strategy is built.
@@ -31,7 +32,7 @@ func New(provider llm.Provider, modelName string, inputCostPer1KTokensCents, out
 
 func (s *Strategy) Name() string { return "baseline" }
 
-func (s *Strategy) MaxCalls() int { return 1 }
+func (s *Strategy) MaxCalls() int { return 2 }
 
 func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (extraction.RunResult, error) {
 	result, err := s.LLM.ExtractReceipt(ctx, image, mimeType)
