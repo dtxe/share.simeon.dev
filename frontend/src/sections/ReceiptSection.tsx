@@ -36,13 +36,34 @@ export function ReceiptSection({
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [confirmReupload, setConfirmReupload] = useState(false)
+  const [pendingUpload, setPendingUpload] = useState(false)
+  const [isDragOver, setIsDragOver] = useState(false)
+  const busy = pendingUpload || stage === 'uploading' || stage === 'parsing'
+
+  async function startUpload(file: File) {
+    if (busy) return
+    setConfirmReupload(false)
+    setPendingUpload(true)
+    try {
+      await onUpload(file)
+    } finally {
+      setPendingUpload(false)
+    }
+  }
 
   async function handleFile(e: React.ChangeEvent<HTMLInputElement>) {
     const file = e.target.files?.[0]
     e.target.value = ''
     if (!file) return
-    setConfirmReupload(false)
-    await onUpload(file)
+    await startUpload(file)
+  }
+
+  function handleDrop(e: React.DragEvent<HTMLButtonElement>) {
+    e.preventDefault()
+    setIsDragOver(false)
+    if (busy) return
+    const file = e.dataTransfer.files[0]
+    if (file) void startUpload(file)
   }
 
   function handleReuploadClick() {
@@ -61,11 +82,17 @@ export function ReceiptSection({
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          disabled={stage === 'uploading' || stage === 'parsing'}
-          className="flex items-center justify-center gap-2 rounded-lg border border-dashed border-[var(--color-border)] bg-white px-4 py-4 text-center text-sm font-medium text-[var(--color-accent)] disabled:opacity-60"
+          onDragOver={(e) => {
+            e.preventDefault()
+            if (!busy) setIsDragOver(true)
+          }}
+          onDragLeave={() => setIsDragOver(false)}
+          onDrop={handleDrop}
+          disabled={busy}
+          className={`flex items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-4 text-center text-sm font-medium text-[var(--color-accent)] disabled:opacity-60 ${isDragOver ? 'border-[var(--color-accent)] bg-neutral-50' : 'border-[var(--color-border)] bg-white'}`}
         >
-          {(stage === 'uploading' || stage === 'parsing') && <Loader2 size={16} className="animate-spin" />}
-          {stage === 'uploading' ? 'Uploading…' : stage === 'parsing' ? 'Reading your receipt…' : 'Scan receipt — photo or upload'}
+          {busy && <Loader2 size={16} className="animate-spin" />}
+          {stage === 'parsing' ? 'Reading your receipt…' : busy ? 'Uploading…' : 'Scan receipt — photo or upload'}
         </button>
       )}
 
@@ -73,10 +100,10 @@ export function ReceiptSection({
         <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white p-3">
           {receiptUrl && <ReceiptImage src={receiptUrl} size={64} />}
           <div className="flex flex-1 flex-col gap-1">
-            {stage === 'uploading' || stage === 'parsing' ? (
+            {stage === 'parsing' || pendingUpload || stage === 'uploading' ? (
               <span className="flex items-center gap-1.5 text-sm text-neutral-500">
                 <Loader2 size={14} className="animate-spin" />
-                {stage === 'uploading' ? 'Uploading…' : 'Reading your receipt…'}
+                {stage === 'parsing' ? 'Reading your receipt…' : 'Uploading…'}
               </span>
             ) : confirmReupload ? (
               <div className="flex flex-col gap-2 text-sm">
