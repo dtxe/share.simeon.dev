@@ -19,26 +19,27 @@ const (
 
 // Compress re-encodes an existing stored receipt to JPEG quality 70, downscaling
 // so the longest edge is at most 2000 pixels while preserving the aspect ratio.
-// The compressed file atomically replaces the original at the same relative path.
-func (s *LocalStorage) Compress(ctx context.Context, relPath string) (int, int, error) {
+// The compressed file is written as a new sibling. The caller must commit the
+// returned path before queueing the source for deletion.
+func (s *LocalStorage) Compress(ctx context.Context, relPath string) (string, int, int, error) {
 	if err := ctx.Err(); err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
 	clean, err := NormalizePath(relPath)
 	if err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
 
 	fullPath := filepath.Join(s.Dir, filepath.FromSlash(clean))
 	f, err := os.Open(fullPath)
 	if err != nil {
-		return 0, 0, fmt.Errorf("receipts: opening image for compress: %w", err)
+		return "", 0, 0, fmt.Errorf("receipts: opening image for compress: %w", err)
 	}
 	defer f.Close()
 
 	img, _, err := image.Decode(f)
 	if err != nil {
-		return 0, 0, fmt.Errorf("receipts: decoding image for compress: %w", err)
+		return "", 0, 0, fmt.Errorf("receipts: decoding image for compress: %w", err)
 	}
 
 	srcBounds := img.Bounds()
@@ -56,9 +57,15 @@ func (s *LocalStorage) Compress(ctx context.Context, relPath string) (int, int, 
 	}
 
 	dir := filepath.Dir(fullPath)
+	name, err := randomFilename()
+	if err != nil {
+		return "", 0, 0, err
+	}
+	newPath := filepath.Join(filepath.Dir(clean), name)
+	newFullPath := filepath.Join(s.Dir, filepath.FromSlash(newPath))
 	tmp, err := os.CreateTemp(dir, "receipt-compress-*.jpg")
 	if err != nil {
-		return 0, 0, fmt.Errorf("receipts: creating temp file: %w", err)
+		return "", 0, 0, fmt.Errorf("receipts: creating temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
 	cleanedUp := false
@@ -72,19 +79,19 @@ func (s *LocalStorage) Compress(ctx context.Context, relPath string) (int, int, 
 	defer cleanup()
 
 	if err := jpeg.Encode(tmp, out, &jpeg.Options{Quality: postLLMQuality}); err != nil {
-		return 0, 0, fmt.Errorf("receipts: encoding compressed jpeg: %w", err)
+		return "", 0, 0, fmt.Errorf("receipts: encoding compressed jpeg: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return 0, 0, fmt.Errorf("receipts: closing temp file: %w", err)
+		return "", 0, 0, fmt.Errorf("receipts: closing temp file: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, fullPath); err != nil {
-		return 0, 0, fmt.Errorf("receipts: replacing with compressed image: %w", err)
+	if err := os.Rename(tmpPath, newFullPath); err != nil {
+		return "", 0, 0, fmt.Errorf("receipts: installing compressed image: %w", err)
 	}
 	cleanedUp = true // rename consumed the temp file; don't remove it now.
 
 	outBounds := out.Bounds()
-	return outBounds.Dx(), outBounds.Dy(), nil
+	return filepath.ToSlash(newPath), outBounds.Dx(), outBounds.Dy(), nil
 }
 
 func scaledDimensions(width, height, maxSide int) (int, int) {

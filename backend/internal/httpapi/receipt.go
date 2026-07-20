@@ -155,6 +155,9 @@ func (s *Server) handleUploadReceipt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := s.Store.SetReceiptImagePath(r.Context(), sessionID, userID, relPath); err != nil {
+		if compensationErr := compensateReceipt(r.Context(), s.Receipts, s.Store.EnqueueReceiptDeletion, relPath); compensationErr != nil {
+			log.Printf("receipt upload compensation failed session=%s: %v", sessionID, compensationErr)
+		}
 		storeErrToStatus(w, err)
 		return
 	}
@@ -395,27 +398,56 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// After a successful extraction, the LLM has already seen the full-quality
-	// original. Compress the stored file asynchronously so storage and share
-	// links serve the smaller version, replacing the original on disk.
+	// original. Compress asynchronously into a new object, then CAS the DB
+	// pointer; the old object is deleted only through the durable queue.
 	if !sess.ReceiptImageCompressed && sess.ReceiptImagePath != nil {
 		go func(path string) {
-			bgCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-
-			_, _, err := s.Receipts.Compress(bgCtx, path)
+			compressCtx, compressCancel := context.WithTimeout(context.Background(), 30*time.Second)
+			newPath, _, _, err := s.Receipts.Compress(compressCtx, path)
+			compressCancel()
 			if err != nil {
 				if s.Cfg.Debug {
-					log.Printf("debug: compress receipt session=%s path=%s: %v", sessionID, path, err)
+					log.Printf("debug: compress receipt session=%s: %v", sessionID, err)
 				}
 				return
 			}
-			if err := s.Store.MarkReceiptImageCompressed(bgCtx, sessionID, userID); err != nil && s.Cfg.Debug {
-				log.Printf("debug: mark receipt compressed session=%s: %v", sessionID, err)
+			casCtx, casCancel := context.WithTimeout(context.Background(), 5*time.Second)
+			swapped, err := s.Store.ReplaceCompressedReceipt(casCtx, sessionID, userID, path, newPath)
+			casCancel()
+			if err != nil {
+				if compensationErr := compensateReceipt(context.Background(), s.Receipts, s.Store.EnqueueReceiptDeletion, newPath); compensationErr != nil {
+					log.Printf("receipt compression compensation failed session=%s: %v", sessionID, compensationErr)
+				}
+				if s.Cfg.Debug {
+					log.Printf("debug: replace compressed receipt session=%s: %v", sessionID, err)
+				}
+			} else if !swapped {
+				if compensationErr := compensateReceipt(context.Background(), s.Receipts, s.Store.EnqueueReceiptDeletion, newPath); compensationErr != nil {
+					log.Printf("receipt compression loser cleanup failed session=%s: %v", sessionID, compensationErr)
+				}
 			}
 		}(*sess.ReceiptImagePath)
 	}
 
 	writeJSON(w, http.StatusOK, runResult.Receipt)
+}
+
+// compensateReceipt uses independent bounded operations: a timed-out object
+// delete must never prevent durable queueing of the orphan.
+func compensateReceipt(parent context.Context, rs receipts.ReceiptStorage, enqueue func(context.Context, string) error, path string) error {
+	deleteCtx, deleteCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	deleteErr := rs.Delete(deleteCtx, path)
+	deleteCancel()
+	if deleteErr == nil {
+		return nil
+	}
+	enqueueCtx, enqueueCancel := context.WithTimeout(context.WithoutCancel(parent), 5*time.Second)
+	enqueueErr := enqueue(enqueueCtx, path)
+	enqueueCancel()
+	if enqueueErr != nil {
+		return fmt.Errorf("delete and enqueue failed: %w", enqueueErr)
+	}
+	return nil
 }
 
 // formatQtyPrefix formats a quantity as a compact name prefix, e.g. "2x " or "0.5x ".

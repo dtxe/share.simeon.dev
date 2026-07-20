@@ -36,7 +36,7 @@ type ReceiptStorage interface {
 	Save(context.Context, string, io.Reader) (string, error)
 	Open(context.Context, string) (io.ReadCloser, error)
 	Delete(context.Context, string) error
-	Compress(context.Context, string) (int, int, error)
+	Compress(context.Context, string) (string, int, int, error)
 }
 
 // Presigner is the capability used by the private S3 proxy authorizer.
@@ -88,12 +88,21 @@ func (s *LocalStorage) Save(ctx context.Context, sessionID string, r io.Reader) 
 	if err != nil {
 		return "", fmt.Errorf("receipts: creating file: %w", err)
 	}
-	defer f.Close()
+	committed := false
+	defer func() {
+		_ = f.Close()
+		if !committed {
+			_ = os.Remove(fullPath)
+		}
+	}()
 
 	if _, err := f.Write(data); err != nil {
 		return "", fmt.Errorf("receipts: writing normalized jpeg: %w", err)
 	}
-
+	if err := f.Close(); err != nil {
+		return "", fmt.Errorf("receipts: closing file: %w", err)
+	}
+	committed = true
 	return relPath, nil
 }
 

@@ -23,16 +23,24 @@ type fakeS3 struct {
 	body    []byte
 	deleted string
 	missing bool
+	objects map[string][]byte
 }
 
 func (f *fakeS3) PutObject(ctx context.Context, in *s3.PutObjectInput, _ ...func(*s3.Options)) (*s3.PutObjectOutput, error) {
 	f.put = in
 	f.body, _ = io.ReadAll(in.Body)
+	if f.objects == nil {
+		f.objects = map[string][]byte{}
+	}
+	f.objects[*in.Key] = append([]byte(nil), f.body...)
 	return &s3.PutObjectOutput{}, nil
 }
-func (f *fakeS3) GetObject(context.Context, *s3.GetObjectInput, ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
+func (f *fakeS3) GetObject(_ context.Context, in *s3.GetObjectInput, _ ...func(*s3.Options)) (*s3.GetObjectOutput, error) {
 	if f.missing {
 		return nil, &smithy.GenericAPIError{Code: "NoSuchKey", Message: "not found"}
+	}
+	if body, ok := f.objects[*in.Key]; ok {
+		return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(body))}, nil
 	}
 	return &s3.GetObjectOutput{Body: io.NopCloser(bytes.NewReader(f.body))}, nil
 }
@@ -92,7 +100,7 @@ func TestS3RejectsInvalidPathAndPresignTTL(t *testing.T) {
 	}
 }
 
-func TestS3CompressReuploadsSameKey(t *testing.T) {
+func TestS3CompressWritesSiblingKey(t *testing.T) {
 	f := &fakeS3{}
 	s := NewS3(f, nil, "bucket", "receipts")
 	var raw bytes.Buffer
@@ -104,10 +112,15 @@ func TestS3CompressReuploadsSameKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.Compress(context.Background(), path); err != nil {
+	source := append([]byte(nil), f.objects["receipts/"+path]...)
+	newPath, _, _, err := s.Compress(context.Background(), path)
+	if err != nil {
 		t.Fatal(err)
 	}
-	if *f.put.Key != "receipts/"+path || *f.put.ContentType != "image/jpeg" || f.put.Metadata["sha256"] == "" {
+	if newPath == path || *f.put.Key != "receipts/"+newPath || *f.put.ContentType != "image/jpeg" || f.put.Metadata["sha256"] == "" {
 		t.Fatalf("compression did not upload normalized object: %#v", f.put)
+	}
+	if !bytes.Equal(source, f.objects["receipts/"+path]) {
+		t.Fatal("compression overwrote source object")
 	}
 }

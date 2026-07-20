@@ -167,7 +167,20 @@ func (s *Store) UpdateSession(ctx context.Context, id, ownerUserID string, patch
 // always resets the compressed flag so the next successful extraction can
 // recompress from the fresh original.
 func (s *Store) SetReceiptImagePath(ctx context.Context, id, ownerUserID, path string) error {
-	tag, err := s.Pool.Exec(ctx, `
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+	var old *string
+	err = tx.QueryRow(ctx, `SELECT receipt_image_path FROM bill_sessions WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, id, ownerUserID).Scan(&old)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	tag, err := tx.Exec(ctx, `
 		UPDATE bill_sessions
 		SET receipt_image_path = $3,
 		    receipt_image_compressed = false,
@@ -181,25 +194,40 @@ func (s *Store) SetReceiptImagePath(ctx context.Context, id, ownerUserID, path s
 	if tag.RowsAffected() == 0 {
 		return ErrNotFound
 	}
-	return nil
+	if old != nil {
+		if _, err = tx.Exec(ctx, `INSERT INTO receipt_deletion_queue (path) VALUES ($1) ON CONFLICT (path) DO NOTHING`, *old); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
-// MarkReceiptImageCompressed sets the compressed flag after the stored
-// receipt has been asynchronously downscaled/re-encoded following a
-// successful LLM extraction.
-func (s *Store) MarkReceiptImageCompressed(ctx context.Context, id, ownerUserID string) error {
-	tag, err := s.Pool.Exec(ctx, `
-		UPDATE bill_sessions
-		SET receipt_image_compressed = true, updated_at = now()
-		WHERE id = $1 AND owner_user_id = $2
-	`, id, ownerUserID)
+// ReplaceCompressedReceipt atomically swaps a receipt only if the captured
+// owner and source path are still current, and queues the source for deletion.
+func (s *Store) ReplaceCompressedReceipt(ctx context.Context, id, ownerUserID, oldPath, newPath string) (bool, error) {
+	tx, err := s.Pool.Begin(ctx)
 	if err != nil {
-		return err
+		return false, err
+	}
+	defer tx.Rollback(ctx)
+	tag, err := tx.Exec(ctx, `
+		UPDATE bill_sessions
+		SET receipt_image_path = $4, receipt_image_compressed = true, updated_at = now()
+		WHERE id = $1 AND owner_user_id = $2 AND receipt_image_path = $3 AND receipt_image_compressed = false
+	`, id, ownerUserID, oldPath, newPath)
+	if err != nil {
+		return false, err
 	}
 	if tag.RowsAffected() == 0 {
-		return ErrNotFound
+		return false, nil
 	}
-	return nil
+	if _, err = tx.Exec(ctx, `INSERT INTO receipt_deletion_queue (path) VALUES ($1) ON CONFLICT (path) DO NOTHING`, oldPath); err != nil {
+		return false, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // IncrementExtractCount is race-safe: it only increments (and reports
@@ -707,32 +735,71 @@ func (s *Store) DeleteExpiredWebauthnCeremonies(ctx context.Context) (int64, err
 	return tag.RowsAffected(), nil
 }
 
-// DeleteExpiredBillSessions removes stale bills (cascading to their people,
-// dishes, portions, extraction_runs, and extraction_attempts) and returns
-// the receipt image paths that need deleting from disk too — the DB delete
-// doesn't touch the filesystem, so the caller (internal/cleanup) is
-// responsible for that.
-func (s *Store) DeleteExpiredBillSessions(ctx context.Context) (receiptPaths []string, count int64, err error) {
-	rows, err := s.Pool.Query(ctx, `
-		DELETE FROM bill_sessions WHERE expires_at < now()
+// DeleteExpiredBillSessions removes stale bills and durably queues their
+// receipt paths in the same transaction.
+func (s *Store) DeleteExpiredBillSessions(ctx context.Context) (int64, error) {
+	var count int64
+	err := s.Pool.QueryRow(ctx, `WITH deleted AS (
+		DELETE FROM bill_sessions
+		WHERE expires_at < now()
 		RETURNING receipt_image_path
-	`)
+	), queued AS (
+		INSERT INTO receipt_deletion_queue (path)
+		SELECT receipt_image_path FROM deleted WHERE receipt_image_path IS NOT NULL
+		ON CONFLICT (path) DO NOTHING
+	)
+	SELECT count(*) FROM deleted`).Scan(&count)
+	return count, err
+}
+
+type ReceiptDeletion struct {
+	ID   int64
+	Path string
+}
+
+func (s *Store) EnqueueReceiptDeletion(ctx context.Context, path string) error {
+	_, err := s.Pool.Exec(ctx, `INSERT INTO receipt_deletion_queue (path) VALUES ($1) ON CONFLICT (path) DO NOTHING`, path)
+	return err
+}
+
+func (s *Store) ClaimReceiptDeletions(ctx context.Context, limit int) ([]ReceiptDeletion, error) {
+	if limit <= 0 {
+		return []ReceiptDeletion{}, nil
+	}
+	rows, err := s.Pool.Query(ctx, `WITH candidates AS (
+		SELECT id FROM receipt_deletion_queue
+		WHERE next_attempt_at <= now() AND (processing_until IS NULL OR processing_until < now())
+		ORDER BY id FOR UPDATE SKIP LOCKED LIMIT $1
+	)
+	UPDATE receipt_deletion_queue q
+	SET processing_until = now() + interval '10 minutes'
+	FROM candidates c WHERE q.id = c.id
+		RETURNING q.id, q.path`, limit)
 	if err != nil {
-		return nil, 0, err
+		return nil, err
 	}
 	defer rows.Close()
-	receiptPaths = []string{}
+	out := []ReceiptDeletion{}
 	for rows.Next() {
-		var p *string
-		if err := rows.Scan(&p); err != nil {
-			return nil, 0, err
+		var d ReceiptDeletion
+		if err := rows.Scan(&d.ID, &d.Path); err != nil {
+			return nil, err
 		}
-		count++
-		if p != nil {
-			receiptPaths = append(receiptPaths, *p)
-		}
+		out = append(out, d)
 	}
-	return receiptPaths, count, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (s *Store) AckReceiptDeletion(ctx context.Context, id int64) error {
+	_, err := s.Pool.Exec(ctx, `DELETE FROM receipt_deletion_queue WHERE id = $1`, id)
+	return err
+}
+func (s *Store) RetryReceiptDeletion(ctx context.Context, id int64) error {
+	_, err := s.Pool.Exec(ctx, `UPDATE receipt_deletion_queue SET attempts = attempts + 1, processing_until = NULL, next_attempt_at = now() + LEAST(interval '24 hours', interval '1 minute' * power(2::numeric, LEAST(attempts + 1, 10))) WHERE id = $1`, id)
+	return err
 }
 
 // --- Normalized extraction telemetry ---

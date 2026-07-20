@@ -15,7 +15,7 @@ func TestCompressDownscalesLargeImage(t *testing.T) {
 	relPath := "session-a/receipt.jpg"
 	writeTestJPEG(t, filepath.Join(storage.Dir, relPath), 3000, 2500)
 
-	w, h, err := storage.Compress(context.Background(), relPath)
+	newPath, w, h, err := storage.Compress(context.Background(), relPath)
 	if err != nil {
 		t.Fatalf("Compress failed: %v", err)
 	}
@@ -24,7 +24,11 @@ func TestCompressDownscalesLargeImage(t *testing.T) {
 	}
 
 	// Verify the on-disk file is the compressed one and there are no temp leftovers.
-	verifyDecoded(t, storage, relPath, 2000, 1667)
+	if newPath == relPath {
+		t.Fatal("compression reused source path")
+	}
+	verifyDecoded(t, storage, newPath, 2000, 1667)
+	verifyDecoded(t, storage, relPath, 3000, 2500)
 	verifyNoTempFiles(t, filepath.Join(storage.Dir, "session-a"))
 }
 
@@ -33,7 +37,7 @@ func TestCompressReEncodesSmallImageWithoutUpscaling(t *testing.T) {
 	relPath := "session-b/receipt.jpg"
 	writeTestJPEG(t, filepath.Join(storage.Dir, relPath), 800, 600)
 
-	w, h, err := storage.Compress(context.Background(), relPath)
+	newPath, w, h, err := storage.Compress(context.Background(), relPath)
 	if err != nil {
 		t.Fatalf("Compress failed: %v", err)
 	}
@@ -41,12 +45,15 @@ func TestCompressReEncodesSmallImageWithoutUpscaling(t *testing.T) {
 		t.Fatalf("expected dimensions unchanged at 800x600, got %dx%d", w, h)
 	}
 
-	verifyDecoded(t, storage, relPath, 800, 600)
+	if newPath == relPath {
+		t.Fatal("compression reused source path")
+	}
+	verifyDecoded(t, storage, newPath, 800, 600)
 }
 
 func TestCompressMissingFile(t *testing.T) {
 	storage := New(t.TempDir())
-	_, _, err := storage.Compress(context.Background(), "session-c/missing.jpg")
+	_, _, _, err := storage.Compress(context.Background(), "session-c/missing.jpg")
 	if err == nil {
 		t.Fatal("expected error for missing file")
 	}

@@ -139,15 +139,15 @@ func (s *S3Storage) PresignHead(ctx context.Context, path string, ttl time.Durat
 	return out.URL, nil
 }
 
-func (s *S3Storage) Compress(ctx context.Context, path string) (int, int, error) {
+func (s *S3Storage) Compress(ctx context.Context, path string) (string, int, int, error) {
 	f, err := s.Open(ctx, path)
 	if err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
 	defer f.Close()
 	img, _, err := image.Decode(f)
 	if err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
 	b := img.Bounds()
 	out := image.Image(img)
@@ -159,18 +159,32 @@ func (s *S3Storage) Compress(ctx context.Context, path string) (int, int, error)
 	}
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, out, &jpeg.Options{Quality: postLLMQuality}); err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
 	}
-	key, err := s.key(path)
+	clean, err := NormalizePath(path)
 	if err != nil {
-		return 0, 0, err
+		return "", 0, 0, err
+	}
+	parts := strings.Split(clean, "/")
+	name, err := randomFilename()
+	if err != nil {
+		return "", 0, 0, err
+	}
+	newPath := parts[0] + "/" + name
+	key, err := s.key(newPath)
+	if err != nil {
+		return "", 0, 0, err
 	}
 	h := sha256.Sum256(buf.Bytes())
-	_, err = s.client.PutObject(ctx, &s3.PutObjectInput{Bucket: aws.String(s.Bucket), Key: aws.String(key), Body: bytes.NewReader(buf.Bytes()), ContentType: aws.String("image/jpeg"), ContentDisposition: aws.String(`inline; filename="receipt.jpg"`), CacheControl: aws.String("private, max-age=3600"), Metadata: map[string]string{"sha256": hex.EncodeToString(h[:])}, ServerSideEncryption: types.ServerSideEncryptionAes256})
+	_, err = s.client.PutObject(ctx, imagePut(s.Bucket, key, buf.Bytes(), h))
 	if err != nil {
-		return 0, 0, fmt.Errorf("receipts: storing compressed s3 object: %w", err)
+		return "", 0, 0, fmt.Errorf("receipts: storing compressed s3 object: %w", err)
 	}
-	return out.Bounds().Dx(), out.Bounds().Dy(), nil
+	return newPath, out.Bounds().Dx(), out.Bounds().Dy(), nil
+}
+
+func imagePut(bucket, key string, data []byte, h [32]byte) *s3.PutObjectInput {
+	return &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: bytes.NewReader(data), ContentType: aws.String("image/jpeg"), ContentDisposition: aws.String(`inline; filename="receipt.jpg"`), CacheControl: aws.String("private, max-age=3600"), Metadata: map[string]string{"sha256": hex.EncodeToString(h[:])}, ServerSideEncryption: types.ServerSideEncryptionAes256}
 }
 
 // normalizedJPEG applies the same upload validation and q80 normalization to every backend.
