@@ -230,7 +230,7 @@ type LLMPricing struct {
 	OutputCostPer1KTokensCents float64
 }
 
-const defaultLLMModel = "accounts/fireworks/models/minimax-m3"
+const defaultLLMModel = "accounts/fireworks/models/kimi-k2p7-code"
 
 var supportedLLMModelPricing = map[string]LLMPricing{
 	"accounts/fireworks/models/minimax-m3": {

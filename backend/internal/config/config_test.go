@@ -56,7 +56,7 @@ func setMigrationEnv(t *testing.T) {
 	t.Setenv("S3_CREDENTIALS", `{"userName":"u","accessKey":"a","secretKey":"s"}`)
 }
 
-func TestLoadDefaultsToMinimaxM3Pricing(t *testing.T) {
+func TestLoadDefaultsToKimiK2P7Pricing(t *testing.T) {
 	setRequiredEnv(t)
 
 	cfg, err := Load()
@@ -67,8 +67,8 @@ func TestLoadDefaultsToMinimaxM3Pricing(t *testing.T) {
 	if cfg.LLMModel != defaultLLMModel {
 		t.Fatalf("LLMModel = %q, want %q", cfg.LLMModel, defaultLLMModel)
 	}
-	if cfg.LLMInputCostPer1KTokensCents != 0.03 || cfg.LLMOutputCostPer1KTokensCents != 0.12 {
-		t.Fatalf("LLM costs = input %v output %v, want input 0.03 output 0.12",
+	if cfg.LLMInputCostPer1KTokensCents != 0.095 || cfg.LLMOutputCostPer1KTokensCents != 0.4 {
+		t.Fatalf("LLM costs = input %v output %v, want input 0.095 output 0.4",
 			cfg.LLMInputCostPer1KTokensCents, cfg.LLMOutputCostPer1KTokensCents)
 	}
 }
