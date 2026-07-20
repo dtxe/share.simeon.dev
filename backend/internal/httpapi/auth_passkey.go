@@ -24,7 +24,7 @@ func (s *Server) handlePasskeyRegisterOptions(w http.ResponseWriter, r *http.Req
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ceremonyId": ceremonyID, "options": creation})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ceremonyId": ceremonyID, "options": creation.Response})
 }
 
 func (s *Server) handlePasskeyRegisterVerify(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +53,7 @@ func (s *Server) handlePasskeyLoginOptions(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(map[string]any{"ceremonyId": ceremonyID, "options": assertion})
+	_ = json.NewEncoder(w).Encode(map[string]any{"ceremonyId": ceremonyID, "options": assertion.Response})
 }
 
 func (s *Server) handlePasskeyLoginVerify(w http.ResponseWriter, r *http.Request) {
