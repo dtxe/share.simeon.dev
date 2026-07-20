@@ -33,10 +33,9 @@ For Compose, create the local, gitignored secret file
 `backend` and the `receipt-migrate` ops service. Never put real values in this
 document, `.env.example`, shell history, or a commit.
 
-`RECEIPT_STORAGE` defaults to `s3`; set it to `local` only for direct-backend
-or Vite development and tests (where receipt requests go straight to the Go
-backend). Local mode is not supported behind the production Caddy ingress:
-the production Caddyfile's receipt interception requires `RECEIPT_STORAGE=s3`.
+`RECEIPT_STORAGE` defaults to `s3`; set it to `local` only for development and
+tests. Production receipt requests pass through Caddy's normal API proxy to the
+Go backend, which authorizes the request and reads the private S3 object.
 With `RECEIPT_STORAGE=s3`, these values are required:
 `S3_ENDPOINT` (absolute HTTPS URL), `S3_BUCKET`, `S3_REGION`, `S3_PREFIX`,
 `S3_PROXY_HOST` (hostname only), and `S3_CREDENTIALS` or
@@ -53,23 +52,12 @@ Existing client URLs remain unchanged:
 - owner: `GET`/`HEAD /api/sessions/{id}/receipt`
 - public share: `GET`/`HEAD /api/view/{token}/receipt`
 
-For those exact paths, Caddy's `forward_auth` calls
-`GET /internal/receipts/authorize` on the backend. The authorizer uses
-`ExistingUserID`, not the normal Identify middleware: an invalid or absent
-owner session is rejected without provisioning an anonymous user or session.
-Public access is authorized by the existing view token. On success the
-backend looks up the object path from the database row and returns only a
-short-lived (45-second) internal S3 URI in `X-Share-S3-URI`; it does not expose
-the signed URL to the browser.
-
-Caddy's `route` then rewrites the request to that backend-supplied URI and
-proxies to the fixed OVH host above. The `route` block is mandatory: it keeps
-forward-auth, the authenticated rewrite, and the S3 proxy in an explicit
-sequence. Without it, Caddy's directive ordering can run a rewrite/proxy or
-SPA fallback in an unsafe/unintended order, and a client could otherwise try
-to influence the object path. The S3 proxy strips cookies, Authorization,
-anonymous-session, forwarded, origin, referer, and related internal headers
-before proxying. Caddy also sends `Referrer-Policy: no-referrer`.
+These URLs use Caddy's normal `/api/*` proxy. The owner endpoint requires the
+existing authenticated session and checks bill ownership; the public endpoint
+requires the existing unguessable view token. Only after authorization does
+the Go backend look up the database path and fetch the private object using
+server-side S3 credentials. Neither an object URL nor S3 credentials are sent
+to the browser. Caddy also sends `Referrer-Policy: no-referrer`.
 
 Keep the bucket policy private and do not add CORS merely for this design:
 browser requests are same-origin to Caddy. Direct unsigned bucket reads must
@@ -126,8 +114,8 @@ verified, and orphans.
    non-zero exit before continuing.
 5. Run `migrate`, then run the explicit full `verify` command and retain its
    output. Do not proceed if verification or conflict checks fail.
-6. Deploy the S3-configured backend and frontend/Caddy image. Confirm the
-   Caddyfile contains the exact receipt route block and fixed OVH proxy host.
+6. Deploy the S3-configured backend and frontend/Caddy image. Confirm receipt
+   URLs pass through the normal `/api/*` backend proxy.
 7. Run the smoke tests below, including unauthorized and direct-unsigned
    access tests.
 8. Resume frontend/backend writes and monitor logs, cleanup, and the deletion
@@ -158,10 +146,9 @@ current receipt objects: bill expiry is independent and can be extended.
 
 ## Rollback and local-volume retention
 
-If the S3 backend is healthy but ingress is not, keep the backend configured
-for S3 and temporarily route receipt bytes through the Go/direct API path by
-reverting the ingress/Caddy change. This preserves the S3 backend's object
-semantics while isolating the proxy problem.
+Production routes receipt bytes through the Go API path. This preserves the
+private bucket and server-side authorization while avoiding proxy-layer
+changes to signed S3 requests.
 
 Before cutover, agree and record a local-volume review window (for example,
 seven days) during which the backed-up/local `uploads` volume is retained;

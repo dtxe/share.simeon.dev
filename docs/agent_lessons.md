@@ -65,7 +65,7 @@ Done since first written: daily cleanup job (`internal/cleanup`, wired into `mai
 
 - Receipt storage is no longer local-disk-only: production defaults to a private OVH S3 bucket, while `RECEIPT_STORAGE=local` remains an explicit selectable mode. Keep the local uploads volume available during the migration review window because new S3 objects cannot be recovered by simply switching back to local mode.
 - `receipt-migrate migrate --dry-run` intentionally skips the mutating canary preflight; run `preflight` separately. A normal `migrate` runs preflight and full verification, while `verify` compares every DB-referenced local/S3 object by SHA-256. Conflicts and unverifiable existing objects stop the command rather than overwriting them.
-- The Caddy receipt route must preserve its `route` ordering: forward-auth first, then backend-provided rewrite, then the fixed OVH proxy. Strip cookies, authorization, forwarding, origin, and referrer headers before the S3 hop; test response bodies and unsigned direct bucket access, not only status codes.
+- Do not interpolate a presigned S3 URI from a response header into Caddy's `rewrite`: the query string is dropped or component-escaped, invalidating SigV4 and turning every private object fetch into a 403. Production sends receipt URLs through the normal backend proxy instead; Go authorizes the owner session or view token before streaming the private S3 object.
 - Receipt deletion is an outbox, not a best-effort side effect. Expiry, replacement, compression races, and upload compensation enqueue paths; cleanup claims rows, retries failures with backoff, and acknowledges only successful object deletion.
 
 ## Docker secrets
