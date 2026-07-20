@@ -19,6 +19,7 @@ import (
 	"share/backend/internal/auth"
 	"share/backend/internal/extraction"
 	"share/backend/internal/imageconverter"
+	"share/backend/internal/ratelimit"
 	"share/backend/internal/receipts"
 	"share/backend/internal/store"
 )
@@ -224,19 +225,23 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ip := auth.ClientIP(r, s.Cfg.TrustedProxy, s.Cfg.RealIPHeader)
-	if allowed, err := s.RL.AllowExtractPerIP(ctx, ip); err == nil && !allowed {
-		writeJSONError(w, http.StatusTooManyRequests, "too many requests")
-		return
+	if s.Cfg.RateLimitsEnabled {
+		if allowed, window, threshold, err := s.RL.AllowExtractPerIPDetailed(ctx, ip); err == nil && !allowed {
+			writeJSONError(w, http.StatusTooManyRequests, fmt.Sprintf("Receipt scan rate limit reached: %d scans per %s", threshold, window))
+			return
+		}
 	}
 
-	underCap, err := s.Store.IncrementExtractCount(ctx, sessionID, userID, maxExtractPerSession)
-	if err != nil {
-		writeJSONError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if !underCap {
-		writeJSONError(w, http.StatusTooManyRequests, "extraction limit reached for this bill")
-		return
+	if s.Cfg.RateLimitsEnabled {
+		underCap, err := s.Store.IncrementExtractCount(ctx, sessionID, userID, maxExtractPerSession)
+		if err != nil {
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !underCap {
+			writeJSONError(w, http.StatusTooManyRequests, fmt.Sprintf("This bill has reached its %d-scan receipt limit", maxExtractPerSession))
+			return
+		}
 	}
 
 	maxCalls := s.Extractor.MaxCalls()
@@ -245,7 +250,7 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	if maxCalls > s.Cfg.LLMMaxSpendPerReceiptCents/extraction.ReservationCentsPerCall {
+	if s.Cfg.RateLimitsEnabled && maxCalls > s.Cfg.LLMMaxSpendPerReceiptCents/extraction.ReservationCentsPerCall {
 		writeJSONError(w, http.StatusServiceUnavailable, "extraction strategy exceeds the per-receipt budget")
 		return
 	}
@@ -278,16 +283,20 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reservation, reserved, err := s.RL.ReserveLLMSpendDetailed(ctx, reservedCents, s.Cfg.LLMDailySpendCapCents)
-	if err != nil {
-		s.completeEmptyExtractionRun(runID, "error", "spend reservation failed")
-		writeJSONError(w, http.StatusInternalServerError, "internal error")
-		return
-	}
-	if !reserved {
-		s.completeEmptyExtractionRun(runID, "rejected", "daily extraction budget reached")
-		writeJSONError(w, http.StatusServiceUnavailable, "daily extraction budget reached, try manual entry")
-		return
+	var reservation *ratelimit.SpendReservation
+	reserved := true
+	if s.Cfg.RateLimitsEnabled {
+		reservation, reserved, err = s.RL.ReserveLLMSpendDetailed(ctx, reservedCents, s.Cfg.LLMDailySpendCapCents)
+		if err != nil {
+			s.completeEmptyExtractionRun(runID, "error", "spend reservation failed")
+			writeJSONError(w, http.StatusInternalServerError, "internal error")
+			return
+		}
+		if !reserved {
+			s.completeEmptyExtractionRun(runID, "rejected", "daily extraction budget reached")
+			writeJSONError(w, http.StatusServiceUnavailable, "daily extraction budget reached, try manual entry")
+			return
+		}
 	}
 
 	extractCtx, cancel := context.WithTimeout(ctx, 60*time.Second*time.Duration(maxCalls))
@@ -302,7 +311,10 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		runErr = errors.Join(runErr, contractErr)
 	}
 	accountingCtx, accountingCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
-	_, reconcileErr := s.RL.FinalizeLLMSpend(accountingCtx, reservation, accountedCents)
+	reconcileErr := error(nil)
+	if reservation != nil {
+		_, reconcileErr = s.RL.FinalizeLLMSpend(accountingCtx, reservation, accountedCents)
+	}
 	if reconcileErr != nil {
 		log.Printf("extract: reconcile spend run=%s: %v", runID, reconcileErr)
 	}
@@ -323,7 +335,7 @@ func (s *Server) handleExtract(w http.ResponseWriter, r *http.Request) {
 		KnownActualCostCents: knownActualCost,
 		AccountedCostCents:   &accountedCost,
 		ReservationAccepted:  true,
-		SpendReconciled:      reconcileErr == nil,
+		SpendReconciled:      !s.Cfg.RateLimitsEnabled || reconcileErr == nil,
 		CompletedAt:          time.Now(),
 		Attempts:             attemptRows,
 	})

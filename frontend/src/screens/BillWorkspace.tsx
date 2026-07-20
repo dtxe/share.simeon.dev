@@ -26,7 +26,7 @@ const IDLE_RECEIPT_FLOW: ReceiptFlow = { stage: 'idle', error: null, retryable: 
 
 function extractErrorMessage(err: unknown): string {
   if (err instanceof ApiError && err.status === 429) {
-    return 'Scan limit reached for this bill — add items below.'
+    return err.message || 'Scanning is temporarily limited — add items below.'
   }
   if (err instanceof ApiError && err.status === 503) {
     return "Scanning isn't available right now — add items below."

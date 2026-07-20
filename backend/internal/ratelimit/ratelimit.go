@@ -55,7 +55,45 @@ func (l *Limiter) AllowCreateSessionPerIP(ctx context.Context, ip string) (bool,
 }
 
 func (l *Limiter) AllowExtractPerIP(ctx context.Context, ip string) (bool, error) {
-	return l.Allow(ctx, "rl:extract:"+ip, 5, time.Hour)
+	allowed, _, _, err := l.AllowExtractPerIPDetailed(ctx, ip)
+	return allowed, err
+}
+
+// ExtractionWindow identifies the independent extraction cap that rejected a
+// request. All windows are checked; a request is allowed only when all pass.
+type ExtractionWindow struct {
+	Name      string
+	Threshold int
+	Duration  time.Duration
+}
+
+var extractionWindows = []ExtractionWindow{
+	{Name: "hour", Threshold: 10, Duration: time.Hour},
+	{Name: "day", Threshold: 20, Duration: 24 * time.Hour},
+	{Name: "month", Threshold: 50, Duration: 30 * 24 * time.Hour},
+}
+
+// AllowExtractPerIPDetailed applies the production extraction caps using
+// independent fixed-window Redis counters and reports the exhausted window.
+func (l *Limiter) AllowExtractPerIPDetailed(ctx context.Context, ip string) (bool, string, int, error) {
+	allowedAll := true
+	var exhaustedName string
+	var exhaustedThreshold int
+	for _, window := range extractionWindows {
+		key := "rl:extract:ip:" + window.Name + ":" + ip
+		allowed, err := l.Allow(ctx, key, window.Threshold, window.Duration)
+		if err != nil {
+			return false, "", 0, err
+		}
+		if !allowed {
+			allowedAll = false
+			if exhaustedName == "" {
+				exhaustedName = window.Name
+				exhaustedThreshold = window.Threshold
+			}
+		}
+	}
+	return allowedAll, exhaustedName, exhaustedThreshold, nil
 }
 
 func (l *Limiter) AllowOTPRequestPerIP(ctx context.Context, ip string, maxPerHour int) (bool, error) {

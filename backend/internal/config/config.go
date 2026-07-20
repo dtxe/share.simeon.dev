@@ -28,8 +28,9 @@ type Config struct {
 	// Cloudflare). Empty falls back to X-Forwarded-For's last hop.
 	RealIPHeader string
 
-	DatabaseURL string
-	RedisURL    string
+	DatabaseURL       string
+	RedisURL          string
+	RateLimitsEnabled bool
 
 	// DB* are used to build DatabaseURL when DATABASE_URL itself isn't set —
 	// lets the password come from a docker secret file (DB_PASSWORD_FILE)
@@ -264,8 +265,9 @@ func Load() (*Config, error) {
 		TrustedProxy:                 getBool("TRUSTED_PROXY", false),
 		RealIPHeader:                 getEnv("REAL_IP_HEADER", ""),
 
-		DatabaseURL: getEnv("DATABASE_URL", ""),
-		RedisURL:    getEnv("REDIS_URL", ""),
+		DatabaseURL:       getEnv("DATABASE_URL", ""),
+		RedisURL:          getEnv("REDIS_URL", ""),
+		RateLimitsEnabled: getBool("RATE_LIMITS_ENABLED", true),
 
 		DBHost:     getEnv("DB_HOST", "postgres"),
 		DBPort:     getEnv("DB_PORT", "5432"),
