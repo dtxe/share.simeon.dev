@@ -61,7 +61,7 @@ services:
     volumes:
       - uploads:/data/uploads
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
+      test: ["CMD", "/healthcheck"]
       interval: 5s
       timeout: 5s
       retries: 10
