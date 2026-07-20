@@ -15,6 +15,15 @@ Unconventional, easy-to-miss things future work on this repo should know. Ordina
 - **`docker-compose.override.yml`'s list-valued fields (`ports`, `volumes`, etc.) are unioned with the base file's, not replaced**, when both are loaded together (the default for `docker compose up`). Two services each publishing to the same host port across base+override will collide even though neither file alone looks wrong. Backend's dev-only port ended up as `8081` specifically to avoid colliding with the frontend prod image's `8080:80` mapping from the base file.
 - The target directory (`/srv/cher-app`) was **root-owned** at the very start (`drwxr-xr-x root root`) — needed a `sudo chown` before any scaffolding could happen. Worth an `ls -ld` check before assuming a fresh directory is writable.
 
+### Image conversion
+
+- ImageMagick's `list-length` must be **2** for the transient second image in the conversion pipeline; the application's `identify` output still rejects any multi-frame input, so do not “fix” this by allowing arbitrary frames.
+- Area-based resize rounds each axis independently. Use a conservative target area (with rounding headroom), not exactly `4096*2160`, or the strict output check can be exceeded by one row/column.
+- ImageMagick policy is last-match-wins, and policy rules must use their correct domains (`coder`, `module`, `path`, etc.); a deny/allow rule in the wrong domain is not a meaningful restriction.
+- The Q16HDRI near-limit test measured about **723 MiB** peak memory. Keep converter concurrency at 1 and the service memory limit at **1536m**.
+- Alpine's AVIF/HEIF support is provided through the **HEIC module**; installing or allowing a guessed separate AVIF/HEIF module does not work.
+- Test the actual hardened converter container over HTTP, not only fake runner arguments: policy, delegates, modules, memory, and network isolation are runtime behavior. Keep it on the internal Docker network with no exposed port and no credentials.
+
 ## JSON / API shape
 
 - **Go nil slices serialize to JSON `null`, not `[]`.** Every `internal/store` function that builds a list with `var out []T` returns `null` when the list is empty, which crashes a naive frontend `.map()` over it. Always initialize as `out := []T{}` (or `make([]T, 0, ...)`) when the slice will be JSON-encoded. This one crashed the whole app on the very first brand-new bill (zero dishes/people) and only surfaced via actual browser testing — `go vet`/`tsc`/unit tests all stayed green.

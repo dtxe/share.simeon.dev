@@ -36,9 +36,10 @@ Went through several rounds of direction before landing here — earlier sketche
 - Same modularity pattern applied to **email delivery** (`internal/email.Provider`, SMTP default) — swap providers via env vars only.
 
 ## Receipt upload handling
-- Validate by sniffing magic bytes (`http.DetectContentType`), not client-supplied Content-Type/extension.
-- Dimension check before full decode (decompression-bomb guard), then **always re-encode to JPEG q80** server-side — this strips EXIF/GPS (real privacy leak on an image behind a *public* share link) and neutralizes polyglot-file tricks, not just a size optimization.
-- After a **successful** LLM extraction, the stored receipt is asynchronously re-downscaled to a max 2000-pixel longest edge and re-encoded at **JPEG quality 70**. Local storage installs a sibling file and S3 writes a sibling object; the DB pointer is then CAS-swapped and the old object is queued for deletion. The LLM still gets the full-resolution q80 original for extraction; storage and public share links serve the smaller compressed version.
+- Conversion is client-first: browsers convert/rescale to JPEG at **quality 95** when they can (including native iOS HEIC decoding, with a HEIC fallback), bounded to a 4096-pixel side and `4096*2160` pixels. If client conversion is unavailable or fails, the raw upload goes to the internal converter service.
+- The converter accepts JPEG, PNG, WebP, HEIC, HEIF, and AVIF by magic bytes, never by a client MIME type or extension. Source safety bounds are 10 MiB, an 8192-pixel maximum side, and 40 MP. Its output is strict: JPEG quality 95, max side 4096, and max `4096*2160` pixels (including conservative rounding headroom).
+- Normalization auto-orients, converts to sRGB, composites transparency over white, strips metadata, and rejects multi-frame input. The main backend stays distroless and CGO-free; conversion runs in an isolated Alpine sidecar using hardcoded ImageMagick CLI argv rather than Go bindings. It uses stdin/stdout only: no shell, no user-controlled paths, and no network/credential access.
+- After a **successful** LLM extraction, the stored receipt is asynchronously re-downscaled to a max 2000-pixel longest edge and re-encoded at **JPEG quality 70**. Local storage installs a sibling file and S3 writes a sibling object; the DB pointer is then CAS-swapped and the old object is queued for deletion. The LLM still gets the normalized q95 original for extraction; storage and public share links serve the smaller compressed version.
 - Server-generated filenames only (`{uuid}.jpg`) — no client-controlled byte ever touches a filesystem path.
 
 ### Receipt storage and OVH migration

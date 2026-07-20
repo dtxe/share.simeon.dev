@@ -67,8 +67,11 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] Manual curl smoke test against a real receipt photo — completed with the live Fireworks key from docker secrets; extraction returned structured JSON for a real receipt image
 
 ## 8. Receipt upload pipeline
-- [x] `internal/receipts` — size cap, magic-byte sniff, decompression-bomb guard, re-encode to JPEG q80 (strips EXIF/GPS)
-- [x] Unit tests cover receipt upper bounds: uploads over 10 MiB and decoded images over 40MP are rejected server-side
+- [x] Client-first JPEG q95 conversion/resizing, with raw-upload fallback to the hardened internal converter; `internal/receipts` enforces normalized output and server-side safety bounds
+- [x] Converter sidecar: accepts magic-sniffed JPEG/PNG/WebP/HEIC/HEIF/AVIF, auto-orients, emits sRGB/white-background/metadata-free JPEG q95, rejects multi-frame input, and keeps the main backend distroless/CGO-free
+- [x] Unit tests cover receipt/converter upper bounds: uploads over 10 MiB, source dimensions over 8192/40MP, and output dimensions over 4096/`4096*2160` are rejected
+- [x] Hardened-container format smoke tests: real HTTP conversions passed for JPEG, PNG, WebP, HEIC, HEIF, and AVIF; multi-frame input was rejected; dangerous coders and network access were blocked
+- [x] Runtime smoke verification: 8000x5000 and 5000x8000 inputs stayed within the exact output limits, and near-limit peak memory was about 723 MiB under the service's 1536m limit
 - [x] Storage: selectable local/private-OVH-S3 backends, random-hex filename under a per-session subdirectory, filename never client-derived
 - [x] Manual check: uploaded a real JPEG end-to-end, fetched it back via both the owner route and the public share route, confirmed `file` reports valid JPEG both times
 
