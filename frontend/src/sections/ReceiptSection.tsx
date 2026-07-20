@@ -80,7 +80,7 @@ export function ReceiptSection({
     <div className="flex flex-col gap-3">
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
 
-      {loading && !hasReceipt ? (
+      {(loading || stage === 'parsing') && !hasReceipt ? (
         <div className="loading-box h-12 rounded-lg border border-[var(--color-border)]" aria-label="Loading receipt" />
       ) : !hasReceipt && (
         <button

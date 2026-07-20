@@ -174,10 +174,9 @@ export default function BillWorkspace() {
       setReceiptFlow(id, { stage: 'uploading', error: null, retryable: false })
 
       await api.uploadReceipt(id, uploadable)
-      invalidate(id)
-
       phase = 'extract'
       setReceiptFlow(id, { stage: 'parsing', error: null, retryable: false })
+      invalidate(id)
       const result = await api.extract(id)
       invalidate(id)
       setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null, retryable: false })
