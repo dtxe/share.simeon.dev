@@ -362,7 +362,8 @@ func extractionTools(schema map[string]any) []toolDef {
 		"type": "object",
 		"properties": map[string]any{
 			"item": map[string]any{
-				"type": "array",
+				"type":        "array",
+				"description": "items to total; always pass an array, including for one item",
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
@@ -461,7 +462,7 @@ func normalizedToolCallID(id string) string {
 }
 
 type interimCalculationInput struct {
-	Item []interimCalculationItem `json:"item"`
+	Item json.RawMessage `json:"item"`
 }
 
 type interimCalculationItem struct {
@@ -483,8 +484,12 @@ func calculateInterim(raw string) (string, error) {
 		}
 		return "", fmt.Errorf("openaicompat: invalid interim_calculation arguments: %w", err)
 	}
+	items, err := decodeInterimItems(input.Item)
+	if err != nil {
+		return "", err
+	}
 	var subtotal int64
-	for _, item := range input.Item {
+	for _, item := range items {
 		if item.Price == nil || item.Quantity == nil || *item.Price < 0 || math.IsNaN(*item.Quantity) || math.IsInf(*item.Quantity, 0) {
 			return "", fmt.Errorf("openaicompat: invalid interim_calculation item")
 		}
@@ -504,6 +509,45 @@ func calculateInterim(raw string) (string, error) {
 	}
 	result, _ := json.Marshal(map[string]int64{"subtotalCents": subtotal})
 	return string(result), nil
+}
+
+func decodeInterimItems(raw json.RawMessage) ([]interimCalculationItem, error) {
+	raw = bytes.TrimSpace(raw)
+	if len(raw) == 0 {
+		return nil, fmt.Errorf("openaicompat: invalid interim_calculation arguments: missing item")
+	}
+
+	if raw[0] == '{' {
+		var item interimCalculationItem
+		if err := decodeInterimJSON(raw, &item); err != nil {
+			return nil, err
+		}
+		return []interimCalculationItem{item}, nil
+	}
+	if raw[0] != '[' {
+		return nil, fmt.Errorf("openaicompat: invalid interim_calculation arguments: item must be an array")
+	}
+
+	var items []interimCalculationItem
+	if err := decodeInterimJSON(raw, &items); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+func decodeInterimJSON(raw json.RawMessage, value any) error {
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(value); err != nil {
+		return fmt.Errorf("openaicompat: invalid interim_calculation arguments: %w", err)
+	}
+	if err := dec.Decode(&struct{}{}); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("openaicompat: invalid interim_calculation arguments: trailing JSON")
+		}
+		return fmt.Errorf("openaicompat: invalid interim_calculation arguments: %w", err)
+	}
+	return nil
 }
 
 func extractionPromptForModel(model string) string {

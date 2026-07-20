@@ -309,6 +309,16 @@ func TestCalculateInterimRoundsEachItemAndDefaultsQuantity(t *testing.T) {
 	}
 }
 
+func TestCalculateInterimAcceptsSingletonItem(t *testing.T) {
+	got, err := calculateInterim(`{"item":{"p":275,"n":2}}`)
+	if err != nil {
+		t.Fatalf("calculateInterim: %v", err)
+	}
+	if got != `{"subtotalCents":550}` {
+		t.Fatalf("result = %s, want %s", got, `{"subtotalCents":550}`)
+	}
+}
+
 func TestCalculateInterimRejectsInvalidArguments(t *testing.T) {
 	for _, raw := range []string{`{"item":[{"p":1}]}`, `{"item":[{"p":-1,"n":1}]}`, `{"item":[{"p":1,"n":"one"}]}`, `{"item":[{"p":1,"n":1,"x":2}]}`, `{"item":[]} {"extra":true}`} {
 		if _, err := calculateInterim(raw); err == nil {
