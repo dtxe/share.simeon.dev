@@ -14,6 +14,7 @@ type fakeCleanupStore struct {
 	acked, retried []int64
 	ackErr         error
 	claimLimit     int
+	claimErr       error
 }
 
 func (f *fakeCleanupStore) DeleteExpiredSessions(context.Context) (int64, error) { return 0, nil }
@@ -24,7 +25,16 @@ func (f *fakeCleanupStore) DeleteExpiredWebauthnCeremonies(context.Context) (int
 func (f *fakeCleanupStore) DeleteExpiredBillSessions(context.Context) (int64, error) { return 0, nil }
 func (f *fakeCleanupStore) ClaimReceiptDeletions(_ context.Context, limit int) ([]store.ReceiptDeletion, error) {
 	f.claimLimit = limit
-	return f.items, nil
+	return f.items, f.claimErr
+}
+
+func TestProcessQueueClaimFailureMakesNoStorageCalls(t *testing.T) {
+	s := &fakeCleanupStore{items: []store.ReceiptDeletion{{ID: 6, Path: "a/x.jpg"}}, claimErr: errors.New("claim failed")}
+	r := &fakeReceiptStorage{}
+	processQueue(context.Background(), s, r)
+	if r.calls != 0 || len(s.acked) != 0 || len(s.retried) != 0 {
+		t.Fatalf("calls=%d ack=%v retry=%v", r.calls, s.acked, s.retried)
+	}
 }
 func (f *fakeCleanupStore) AckReceiptDeletion(_ context.Context, id int64) error {
 	f.acked = append(f.acked, id)

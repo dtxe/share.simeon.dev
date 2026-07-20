@@ -21,7 +21,7 @@
 	# blocks, try_files would silently rewrite /api/* requests to
 	# /index.html before reverse_proxy ever got a chance to match them.
 	# Receipt bytes live in a private bucket. Only these exact public URLs are
-	# intercepted; all other API traffic retains the backend fallback above.
+	# intercepted; all other API traffic retains the backend fallback below.
 	@privateReceipt {
 		method GET HEAD
 		path_regexp ^/api/(sessions/[^/]+|view/[^/]+)/receipt$
@@ -62,19 +62,51 @@
 					status 300 301 302 303 305 307 308 400 401 403 405 409 410 411 429 500 501 502 503 504
 				}
 				handle_response @privateS3Missing {
-					header -Location -Content-Type -Content-Length
+					header {
+						-Location
+						-Content-Length
+						-X-Amz-Request-Id
+						-X-Amz-Id-2
+						-ETag
+						-Server
+						Content-Type "text/plain; charset=utf-8"
+					}
 					respond "receipt unavailable" 404
 				}
 				handle_response @privateS3Precondition {
-					header -Location -Content-Type -Content-Length
+					header {
+						-Location
+						-Content-Length
+						-X-Amz-Request-Id
+						-X-Amz-Id-2
+						-ETag
+						-Server
+						Content-Type "text/plain; charset=utf-8"
+					}
 					respond "" 412
 				}
 				handle_response @privateS3Range {
-					header -Location -Content-Type -Content-Length
+					header {
+						-Location
+						-Content-Length
+						-X-Amz-Request-Id
+						-X-Amz-Id-2
+						-ETag
+						-Server
+						Content-Type "text/plain; charset=utf-8"
+					}
 					respond "" 416
 				}
 				handle_response @privateS3OtherErrors {
-					header -Location -Content-Type -Content-Length
+					header {
+						-Location
+						-Content-Length
+						-X-Amz-Request-Id
+						-X-Amz-Id-2
+						-ETag
+						-Server
+						Content-Type "text/plain; charset=utf-8"
+					}
 					respond "receipt unavailable" 502
 				}
 			}

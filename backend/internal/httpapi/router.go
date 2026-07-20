@@ -39,10 +39,10 @@ func NewRouter(s *Server) http.Handler {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ok"))
 	})
-	// Caddy's forward_auth subrequest endpoint is intentionally outside all
-	// Identify, CSRF, and rate-limit middleware. It only authorizes GET/HEAD
-	// receipt fetches and never provisions identity.
-	r.Method(http.MethodGet, "/internal/receipts/authorize", http.HandlerFunc(s.handleReceiptAuthorization))
+	// Caddy's forward_auth subrequest endpoint bypasses Identify and CSRF, but
+	// retains the global per-IP limit. It only authorizes GET/HEAD receipt
+	// fetches and never provisions identity.
+	r.With(s.globalRateLimit).Method(http.MethodGet, "/internal/receipts/authorize", http.HandlerFunc(s.handleReceiptAuthorization))
 
 	r.Route("/api", func(api chi.Router) {
 		// CSRF defense-in-depth: SameSite=Lax cookies alone aren't

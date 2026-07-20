@@ -174,8 +174,47 @@ func TestLoadRejectsInvalidS3Endpoint(t *testing.T) {
 	t.Setenv("RECEIPT_STORAGE", "s3")
 	t.Setenv("S3_CREDENTIALS", `{"userName":"u","accessKey":"a","secretKey":"s"}`)
 	t.Setenv("S3_ENDPOINT", "http://localhost:9000")
-	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "absolute HTTPS") {
+	if _, err := Load(); err == nil || !strings.Contains(err.Error(), "HTTPS URL") {
 		t.Fatalf("Load error = %v", err)
+	}
+}
+
+func TestS3ValidationBothLoaders(t *testing.T) {
+	cases := []struct {
+		name     string
+		endpoint string
+		proxy    string
+		prefix   string
+	}{
+		{name: "proxy mismatch", endpoint: "https://s3.example.com", proxy: "other.s3.example.com", prefix: "receipts"},
+		{name: "endpoint path", endpoint: "https://s3.example.com/api", proxy: "bucket.s3.example.com", prefix: "receipts"},
+		{name: "endpoint query", endpoint: "https://s3.example.com?x=1", proxy: "bucket.s3.example.com", prefix: "receipts"},
+		{name: "endpoint port", endpoint: "https://s3.example.com:443", proxy: "bucket.s3.example.com", prefix: "receipts"},
+		{name: "unsafe prefix", endpoint: "https://s3.example.com", proxy: "bucket.s3.example.com", prefix: "receipts//private"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name+" Load", func(t *testing.T) {
+			setRequiredEnv(t)
+			t.Setenv("RECEIPT_STORAGE", "s3")
+			t.Setenv("S3_CREDENTIALS", `{"userName":"u","accessKey":"a","secretKey":"s"}`)
+			t.Setenv("S3_ENDPOINT", tc.endpoint)
+			t.Setenv("S3_BUCKET", "bucket")
+			t.Setenv("S3_PROXY_HOST", tc.proxy)
+			t.Setenv("S3_PREFIX", tc.prefix)
+			if _, err := Load(); err == nil {
+				t.Fatal("Load accepted invalid S3 configuration")
+			}
+		})
+		t.Run(tc.name+" LoadMigration", func(t *testing.T) {
+			setMigrationEnv(t)
+			t.Setenv("S3_ENDPOINT", tc.endpoint)
+			t.Setenv("S3_BUCKET", "bucket")
+			t.Setenv("S3_PROXY_HOST", tc.proxy)
+			t.Setenv("S3_PREFIX", tc.prefix)
+			if _, err := LoadMigration(); err == nil {
+				t.Fatal("LoadMigration accepted invalid S3 configuration")
+			}
+		})
 	}
 }
 

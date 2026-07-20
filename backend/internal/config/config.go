@@ -9,6 +9,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 )
 
 type Config struct {
@@ -143,15 +144,8 @@ func LoadMigration() (*MigrationConfig, error) {
 		}
 		c.DatabaseURL = fmt.Sprintf("postgres://%s:%s@%s:%s/%s?sslmode=disable", url.QueryEscape(u), url.QueryEscape(p), host, port, url.QueryEscape(n))
 	}
-	endpoint, err := url.Parse(c.S3Endpoint)
-	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
-		return nil, fmt.Errorf("S3_ENDPOINT must be an absolute HTTPS URL")
-	}
-	if c.S3Bucket == "" || c.S3Region == "" || c.S3ProxyHost == "" {
-		return nil, fmt.Errorf("S3_BUCKET, S3_REGION, and S3_PROXY_HOST are required")
-	}
-	if strings.ContainsAny(c.S3ProxyHost, "/?#@: \t\r\n") {
-		return nil, fmt.Errorf("S3_PROXY_HOST must be a hostname without scheme, port, or path")
+	if err := validateS3Settings(c.S3Endpoint, c.S3Bucket, c.S3Region, c.S3Prefix, c.S3ProxyHost); err != nil {
+		return nil, err
 	}
 	var rawCredentials string
 	if rawCredentials, err = getEnvSafe("S3_CREDENTIALS", ""); err != nil {
@@ -162,6 +156,39 @@ func LoadMigration() (*MigrationConfig, error) {
 		return nil, err
 	}
 	return c, nil
+}
+
+func validateS3Settings(endpointRaw, bucket, region, prefix, proxyHost string) error {
+	endpoint, err := url.Parse(endpointRaw)
+	if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.Hostname() == "" || endpoint.User != nil ||
+		endpoint.Port() != "" || (endpoint.Path != "" && endpoint.Path != "/") || endpoint.RawQuery != "" || endpoint.Fragment != "" {
+		return fmt.Errorf("S3_ENDPOINT must be an HTTPS URL with a host and no user, port, query, fragment, or non-root path")
+	}
+	if bucket == "" || region == "" || proxyHost == "" {
+		return fmt.Errorf("S3_BUCKET, S3_REGION, and S3_PROXY_HOST are required")
+	}
+	if strings.ContainsAny(proxyHost, "/?#@: \t\r\n") {
+		return fmt.Errorf("S3_PROXY_HOST must be a hostname without scheme, port, or path")
+	}
+	wantHost := bucket + "." + endpoint.Hostname()
+	if !strings.EqualFold(proxyHost, wantHost) {
+		return fmt.Errorf("S3_PROXY_HOST must equal %q for virtual-hosted addressing", wantHost)
+	}
+	if prefix == "" || strings.HasPrefix(prefix, "/") || strings.HasSuffix(prefix, "/") ||
+		strings.Contains(prefix, "..") || strings.ContainsAny(prefix, "\\?#") {
+		return fmt.Errorf("S3_PREFIX must be a non-empty safe path prefix")
+	}
+	for _, r := range prefix {
+		if unicode.IsControl(r) {
+			return fmt.Errorf("S3_PREFIX must not contain control characters")
+		}
+	}
+	for _, segment := range strings.Split(prefix, "/") {
+		if segment == "" {
+			return fmt.Errorf("S3_PREFIX must not contain empty path segments")
+		}
+	}
+	return nil
 }
 
 func getEnvSafe(key, def string) (string, error) {
@@ -287,16 +314,10 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("RECEIPT_STORAGE must be 's3' or 'local', got %q", cfg.ReceiptStorage)
 	}
 	if cfg.ReceiptStorage == "s3" {
-		if cfg.S3Endpoint == "" || cfg.S3Bucket == "" || cfg.S3Region == "" || cfg.S3ProxyHost == "" {
-			return nil, fmt.Errorf("S3_ENDPOINT, S3_BUCKET, S3_REGION, and S3_PROXY_HOST are required when RECEIPT_STORAGE=s3")
+		if err := validateS3Settings(cfg.S3Endpoint, cfg.S3Bucket, cfg.S3Region, cfg.S3Prefix, cfg.S3ProxyHost); err != nil {
+			return nil, err
 		}
-		endpoint, err := url.Parse(cfg.S3Endpoint)
-		if err != nil || endpoint.Scheme != "https" || endpoint.Host == "" || endpoint.User != nil {
-			return nil, fmt.Errorf("S3_ENDPOINT must be an absolute HTTPS URL")
-		}
-		if strings.ContainsAny(cfg.S3ProxyHost, "/?#@: \t\r\n") {
-			return nil, fmt.Errorf("S3_PROXY_HOST must be a hostname without scheme, port, or path")
-		}
+		var err error
 		cfg.S3Credentials, err = ParseS3Credentials(getEnv("S3_CREDENTIALS", ""))
 		if err != nil {
 			return nil, err
