@@ -62,11 +62,11 @@ export default function BillWorkspace() {
   const people = data?.people ?? EMPTY_PEOPLE
   const dishes = data?.dishes ?? EMPTY_DISHES
   const portions = data?.portions ?? EMPTY_PORTIONS
-  const receiptFlowKeyId = routeId ?? 'new'
-
+  const [newReceiptFlow, setNewReceiptFlow] = useState<ReceiptFlow>(IDLE_RECEIPT_FLOW)
   const { data: receiptFlow = IDLE_RECEIPT_FLOW } = useQuery<ReceiptFlow>({
-    queryKey: ['receiptFlow', receiptFlowKeyId],
+    queryKey: ['receiptFlow', routeId],
     queryFn: () => Promise.resolve(IDLE_RECEIPT_FLOW),
+    enabled: !!routeId,
     staleTime: Infinity,
     gcTime: 5 * 60 * 1000,
   })
@@ -76,8 +76,14 @@ export default function BillWorkspace() {
   }
 
   function setReceiptFlow(id: string, flow: ReceiptFlow) {
-    qc.setQueryData(['receiptFlow', id], flow)
+    if (id === 'new') {
+      setNewReceiptFlow(flow)
+    } else {
+      qc.setQueryData(['receiptFlow', id], flow)
+    }
   }
+
+  const displayedReceiptFlow = routeId ? receiptFlow : newReceiptFlow
 
   // --- section open/collapse orchestration ---
   const [open, setOpen] = useState<Record<SectionId, boolean>>({
@@ -290,9 +296,9 @@ export default function BillWorkspace() {
           subtotalCents={session?.subtotalCents ?? 0}
           dishes={dishes}
           hasPortions={portions.some((p) => p.shares > 0)}
-          stage={receiptFlow.stage}
-          error={receiptFlow.error}
-          retryable={receiptFlow.retryable}
+          stage={displayedReceiptFlow.stage}
+          error={displayedReceiptFlow.error}
+          retryable={displayedReceiptFlow.retryable}
           onUpload={uploadReceipt}
           onAddDish={addDish}
           onUpdateDish={updateDish}
