@@ -73,7 +73,11 @@ export default function SharedView() {
         </div>
       )}
 
-      <footer className="py-6 text-center text-xs text-neutral-400">Split with Share</footer>
+      <footer className="py-6 text-center text-xs text-neutral-400">
+        <a href="https://share.simeon.dev" className="underline">
+          Split your own receipt at share.simeon.dev
+        </a>
+      </footer>
     </div>
   )
 }
