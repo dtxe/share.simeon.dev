@@ -11,7 +11,7 @@ import (
 )
 
 func TestCompressDownscalesLargeImage(t *testing.T) {
-	storage := New(t.TempDir())
+	storage := New(t.TempDir(), testNormalizer{})
 	relPath := "session-a/receipt.jpg"
 	writeTestJPEG(t, filepath.Join(storage.Dir, relPath), 3000, 2500)
 
@@ -33,7 +33,7 @@ func TestCompressDownscalesLargeImage(t *testing.T) {
 }
 
 func TestCompressReEncodesSmallImageWithoutUpscaling(t *testing.T) {
-	storage := New(t.TempDir())
+	storage := New(t.TempDir(), testNormalizer{})
 	relPath := "session-b/receipt.jpg"
 	writeTestJPEG(t, filepath.Join(storage.Dir, relPath), 800, 600)
 
@@ -52,7 +52,7 @@ func TestCompressReEncodesSmallImageWithoutUpscaling(t *testing.T) {
 }
 
 func TestCompressMissingFile(t *testing.T) {
-	storage := New(t.TempDir())
+	storage := New(t.TempDir(), testNormalizer{})
 	_, _, _, err := storage.Compress(context.Background(), "session-c/missing.jpg")
 	if err == nil {
 		t.Fatal("expected error for missing file")

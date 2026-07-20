@@ -18,6 +18,8 @@ type Config struct {
 	S3Endpoint, S3Bucket, S3Region, S3Prefix string
 	S3ProxyHost                              string
 	HTTPAddr                                 string
+	ImageConverterURL                        string
+	ImageConverterTimeoutSeconds             int
 	PublicBaseURL                            string
 	CORSAllowedOrigin                        string
 	TrustedProxy                             bool
@@ -248,17 +250,19 @@ var supportedLLMModelPricing = map[string]LLMPricing{
 // (used for docker secrets in production).
 func Load() (*Config, error) {
 	cfg := &Config{
-		ReceiptStorage:    getEnv("RECEIPT_STORAGE", "s3"),
-		S3Endpoint:        getEnv("S3_ENDPOINT", "https://s3.bhs.io.cloud.ovh.net"),
-		S3Bucket:          getEnv("S3_BUCKET", "share-app"),
-		S3Region:          getEnv("S3_REGION", "bhs"),
-		S3Prefix:          getEnv("S3_PREFIX", "receipts"),
-		S3ProxyHost:       getEnv("S3_PROXY_HOST", "share-app.s3.bhs.io.cloud.ovh.net"),
-		HTTPAddr:          getEnv("HTTP_ADDR", ":8080"),
-		PublicBaseURL:     getEnv("PUBLIC_BASE_URL", "http://localhost:5173"),
-		CORSAllowedOrigin: getEnv("CORS_ALLOWED_ORIGIN", ""),
-		TrustedProxy:      getBool("TRUSTED_PROXY", false),
-		RealIPHeader:      getEnv("REAL_IP_HEADER", ""),
+		ReceiptStorage:               getEnv("RECEIPT_STORAGE", "s3"),
+		S3Endpoint:                   getEnv("S3_ENDPOINT", "https://s3.bhs.io.cloud.ovh.net"),
+		S3Bucket:                     getEnv("S3_BUCKET", "share-app"),
+		S3Region:                     getEnv("S3_REGION", "bhs"),
+		S3Prefix:                     getEnv("S3_PREFIX", "receipts"),
+		S3ProxyHost:                  getEnv("S3_PROXY_HOST", "share-app.s3.bhs.io.cloud.ovh.net"),
+		HTTPAddr:                     getEnv("HTTP_ADDR", ":8080"),
+		ImageConverterURL:            getEnv("IMAGE_CONVERTER_URL", "http://image-converter:8080"),
+		ImageConverterTimeoutSeconds: getInt("IMAGE_CONVERTER_TIMEOUT_SECONDS", 20),
+		PublicBaseURL:                getEnv("PUBLIC_BASE_URL", "http://localhost:5173"),
+		CORSAllowedOrigin:            getEnv("CORS_ALLOWED_ORIGIN", ""),
+		TrustedProxy:                 getBool("TRUSTED_PROXY", false),
+		RealIPHeader:                 getEnv("REAL_IP_HEADER", ""),
 
 		DatabaseURL: getEnv("DATABASE_URL", ""),
 		RedisURL:    getEnv("REDIS_URL", ""),
@@ -312,6 +316,12 @@ func Load() (*Config, error) {
 	}
 	if cfg.ReceiptStorage != "s3" && cfg.ReceiptStorage != "local" {
 		return nil, fmt.Errorf("RECEIPT_STORAGE must be 's3' or 'local', got %q", cfg.ReceiptStorage)
+	}
+	if err := validateImageConverterURL(cfg.ImageConverterURL); err != nil {
+		return nil, err
+	}
+	if err := validateImageConverterTimeout(cfg.ImageConverterTimeoutSeconds); err != nil {
+		return nil, err
 	}
 	if cfg.ReceiptStorage == "s3" {
 		if err := validateS3Settings(cfg.S3Endpoint, cfg.S3Bucket, cfg.S3Region, cfg.S3Prefix, cfg.S3ProxyHost); err != nil {
@@ -378,6 +388,24 @@ func Load() (*Config, error) {
 	}
 
 	return cfg, nil
+}
+
+func validateImageConverterTimeout(seconds int) error {
+	if seconds <= 0 || seconds > 25 {
+		return fmt.Errorf("IMAGE_CONVERTER_TIMEOUT_SECONDS must be between 1 and 25")
+	}
+	return nil
+}
+
+func validateImageConverterURL(raw string) error {
+	u, err := url.Parse(raw)
+	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("IMAGE_CONVERTER_URL must be an HTTP URL with an optional port and no path, query, fragment, or credentials")
+	}
+	if u.Hostname() == "localhost" || strings.ContainsAny(u.Hostname(), "/\\ \t\r\n") {
+		return fmt.Errorf("IMAGE_CONVERTER_URL has invalid host")
+	}
+	return nil
 }
 
 // getEnv resolves FOO from the environment, preferring FOO_FILE (whose

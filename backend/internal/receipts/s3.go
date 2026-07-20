@@ -11,7 +11,6 @@ import (
 	"image/jpeg"
 	"io"
 	"io/fs"
-	"net/http"
 	"strings"
 	"time"
 
@@ -37,10 +36,14 @@ type S3Storage struct {
 	client         s3Client
 	presigner      s3Presigner
 	Bucket, Prefix string
+	normalizer     Normalizer
 }
 
-func NewS3(client s3Client, presigner s3Presigner, bucket, prefix string) *S3Storage {
-	return &S3Storage{client: client, presigner: presigner, Bucket: bucket, Prefix: cleanPrefix(prefix)}
+func NewS3(client s3Client, presigner s3Presigner, bucket, prefix string, normalizer Normalizer) *S3Storage {
+	if normalizer == nil {
+		panic("receipts: nil normalizer")
+	}
+	return &S3Storage{client: client, presigner: presigner, Bucket: bucket, Prefix: cleanPrefix(prefix), normalizer: normalizer}
 }
 func cleanPrefix(p string) string {
 	p = strings.Trim(p, "/")
@@ -58,7 +61,7 @@ func (s *S3Storage) key(path string) (string, error) {
 }
 
 func (s *S3Storage) Save(ctx context.Context, sessionID string, r io.Reader) (string, error) {
-	data, err := normalizedJPEG(r)
+	data, err := s.normalizer.Normalize(ctx, r)
 	if err != nil {
 		return "", err
 	}
@@ -185,40 +188,4 @@ func (s *S3Storage) Compress(ctx context.Context, path string) (string, int, int
 
 func imagePut(bucket, key string, data []byte, h [32]byte) *s3.PutObjectInput {
 	return &s3.PutObjectInput{Bucket: aws.String(bucket), Key: aws.String(key), Body: bytes.NewReader(data), ContentType: aws.String("image/jpeg"), ContentDisposition: aws.String(`inline; filename="receipt.jpg"`), CacheControl: aws.String("private, max-age=3600"), Metadata: map[string]string{"sha256": hex.EncodeToString(h[:])}, ServerSideEncryption: types.ServerSideEncryptionAes256}
-}
-
-// normalizedJPEG applies the same upload validation and q80 normalization to every backend.
-func normalizedJPEG(r io.Reader) ([]byte, error) {
-	raw, err := io.ReadAll(io.LimitReader(r, MaxUploadBytes+1))
-	if err != nil {
-		return nil, fmt.Errorf("receipts: reading upload: %w", err)
-	}
-	if len(raw) > MaxUploadBytes {
-		return nil, fmt.Errorf("receipts: upload exceeds %d bytes", MaxUploadBytes)
-	}
-	if len(raw) == 0 || !allowedMimeTypes[http.DetectContentType(raw[:min(512, len(raw))])] {
-		return nil, fmt.Errorf("receipts: unsupported content type")
-	}
-	cfg, _, err := image.DecodeConfig(bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("receipts: reading image dimensions: %w", err)
-	}
-	if int64(cfg.Width)*int64(cfg.Height) > MaxImagePixels || cfg.Width > MaxImageSide || cfg.Height > MaxImageSide {
-		return nil, fmt.Errorf("receipts: image dimensions too large (%dx%d)", cfg.Width, cfg.Height)
-	}
-	img, _, err := image.Decode(bytes.NewReader(raw))
-	if err != nil {
-		return nil, fmt.Errorf("receipts: decoding image: %w", err)
-	}
-	var out bytes.Buffer
-	if err := jpeg.Encode(&out, img, &jpeg.Options{Quality: jpegQuality}); err != nil {
-		return nil, fmt.Errorf("receipts: re-encoding as jpeg: %w", err)
-	}
-	return out.Bytes(), nil
-}
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
 }

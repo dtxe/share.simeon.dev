@@ -9,34 +9,28 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	_ "image/png" // decoder registration
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
-
-	_ "golang.org/x/image/webp" // decoder registration (decode-only, no encoder needed)
 )
 
 const (
-	MaxUploadBytes = 10 << 20 // 10 MiB
-	MaxImagePixels = 4096 * 2160
-	MaxImageSide   = 4096
-	jpegQuality    = 80
+	MaxUploadBytes    = 10 << 20 // 10 MiB
+	MultipartOverhead = 64 << 10
+	MaxImagePixels    = 4096 * 2160
+	MaxImageSide      = 4096
 )
-
-var allowedMimeTypes = map[string]bool{
-	"image/jpeg": true,
-	"image/png":  true,
-	"image/webp": true,
-}
 
 type ReceiptStorage interface {
 	Save(context.Context, string, io.Reader) (string, error)
 	Open(context.Context, string) (io.ReadCloser, error)
 	Delete(context.Context, string) error
 	Compress(context.Context, string) (string, int, int, error)
+}
+type Normalizer interface {
+	Normalize(context.Context, io.Reader) ([]byte, error)
 }
 
 // Presigner is the capability used by the private S3 proxy authorizer.
@@ -46,12 +40,16 @@ type Presigner interface {
 }
 
 type LocalStorage struct {
-	Dir string
+	Dir        string
+	normalizer Normalizer
 }
 type Storage = LocalStorage // retained for local callers; ReceiptStorage is the runtime abstraction.
 
-func New(dir string) *LocalStorage {
-	return &LocalStorage{Dir: dir}
+func New(dir string, normalizer Normalizer) *LocalStorage {
+	if normalizer == nil {
+		panic("receipts: nil normalizer")
+	}
+	return &LocalStorage{Dir: dir, normalizer: normalizer}
 }
 
 // Save validates and stores an uploaded receipt image, returning the path
@@ -67,7 +65,7 @@ func (s *LocalStorage) Save(ctx context.Context, sessionID string, r io.Reader) 
 		return "", fmt.Errorf("receipts: invalid session id")
 	}
 
-	data, err := normalizedJPEG(r)
+	data, err := s.normalizer.Normalize(ctx, r)
 	if err != nil {
 		return "", err
 	}

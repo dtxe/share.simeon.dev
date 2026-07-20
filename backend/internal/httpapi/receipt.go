@@ -18,6 +18,7 @@ import (
 
 	"share/backend/internal/auth"
 	"share/backend/internal/extraction"
+	"share/backend/internal/imageconverter"
 	"share/backend/internal/receipts"
 	"share/backend/internal/store"
 )
@@ -133,7 +134,7 @@ func (s *Server) handleUploadReceipt(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, receipts.MaxUploadBytes)
+	r.Body = http.MaxBytesReader(w, r.Body, receipts.MaxUploadBytes+receipts.MultipartOverhead)
 	if err := r.ParseMultipartForm(receipts.MaxUploadBytes); err != nil {
 		writeJSONError(w, http.StatusBadRequest, "upload too large or malformed")
 		return
@@ -150,7 +151,12 @@ func (s *Server) handleUploadReceipt(w http.ResponseWriter, r *http.Request) {
 		if s.Cfg.Debug {
 			log.Printf("debug: receipt upload session=%s: %v", sessionID, err)
 		}
-		writeJSONError(w, http.StatusBadRequest, "could not process image")
+		var ce *imageconverter.Error
+		status := http.StatusBadRequest
+		if errors.As(err, &ce) && ce.Category == imageconverter.CategoryUnavailable {
+			status = http.StatusServiceUnavailable
+		}
+		writeJSONError(w, status, "could not process image")
 		return
 	}
 

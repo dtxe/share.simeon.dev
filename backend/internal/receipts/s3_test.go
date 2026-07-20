@@ -51,7 +51,7 @@ func (f *fakeS3) DeleteObject(_ context.Context, in *s3.DeleteObjectInput, _ ...
 
 func TestS3SaveOpenDelete(t *testing.T) {
 	f := &fakeS3{}
-	storage := NewS3(f, nil, "share-app", "receipts")
+	storage := NewS3(f, nil, "share-app", "receipts", testNormalizer{})
 	var raw bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 4, 3))
 	img.Set(0, 0, color.Black)
@@ -84,14 +84,14 @@ func TestS3SaveOpenDelete(t *testing.T) {
 
 func TestS3MissingObjectIsNotExist(t *testing.T) {
 	f := &fakeS3{missing: true}
-	_, err := NewS3(f, nil, "bucket", "receipts").Open(context.Background(), "session/file.jpg")
+	_, err := NewS3(f, nil, "bucket", "receipts", testNormalizer{}).Open(context.Background(), "session/file.jpg")
 	if !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("error = %v, want fs.ErrNotExist", err)
 	}
 }
 
 func TestS3RejectsInvalidPathAndPresignTTL(t *testing.T) {
-	s := NewS3(&fakeS3{}, nil, "bucket", "receipts")
+	s := NewS3(&fakeS3{}, nil, "bucket", "receipts", testNormalizer{})
 	if _, err := s.Open(context.Background(), "../escape.jpg"); err == nil {
 		t.Fatal("expected invalid path")
 	}
@@ -102,7 +102,7 @@ func TestS3RejectsInvalidPathAndPresignTTL(t *testing.T) {
 
 func TestS3CompressWritesSiblingKey(t *testing.T) {
 	f := &fakeS3{}
-	s := NewS3(f, nil, "bucket", "receipts")
+	s := NewS3(f, nil, "bucket", "receipts", testNormalizer{})
 	var raw bytes.Buffer
 	img := image.NewRGBA(image.Rect(0, 0, 4, 3))
 	if err := jpeg.Encode(&raw, img, &jpeg.Options{Quality: 90}); err != nil {

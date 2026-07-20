@@ -23,6 +23,7 @@ import (
 	"share/backend/internal/extraction/baseline"
 	"share/backend/internal/extraction/feedback"
 	"share/backend/internal/httpapi"
+	"share/backend/internal/imageconverter"
 	"share/backend/internal/llm"
 	"share/backend/internal/llm/fireworks"
 	"share/backend/internal/llm/openai"
@@ -105,9 +106,10 @@ func main() {
 			extractor.Name(), extractor.MaxCalls()*extraction.ReservationCentsPerCall, cfg.LLMMaxSpendPerReceiptCents)
 	}
 	st := store.New(pool)
+	normalizer := imageconverter.NewClient(cfg.ImageConverterURL, time.Duration(cfg.ImageConverterTimeoutSeconds)*time.Second)
 	var rs receipts.ReceiptStorage
 	if cfg.ReceiptStorage == "local" {
-		rs = receipts.New(cfg.UploadDir)
+		rs = receipts.New(cfg.UploadDir, normalizer)
 	} else {
 		awsCfg, err := awsconfig.LoadDefaultConfig(ctx,
 			awsconfig.WithRegion(cfg.S3Region),
@@ -120,7 +122,7 @@ func main() {
 			log.Fatalf("s3 config: %v", err)
 		}
 		client := s3.NewFromConfig(awsCfg, func(o *s3.Options) { o.UsePathStyle = false })
-		rs = receipts.NewS3(client, s3.NewPresignClient(client), cfg.S3Bucket, cfg.S3Prefix)
+		rs = receipts.NewS3(client, s3.NewPresignClient(client), cfg.S3Bucket, cfg.S3Prefix, normalizer)
 	}
 
 	cleanupCtx, stopCleanup := context.WithCancel(ctx)

@@ -10,7 +10,7 @@ import (
 )
 
 func TestSaveRejectsUploadOverByteLimit(t *testing.T) {
-	storage := New(t.TempDir())
+	storage := New(t.TempDir(), rejectingNormalizer{})
 	_, err := storage.Save(context.Background(), "session-id", bytes.NewReader(make([]byte, MaxUploadBytes+1)))
 	if err == nil {
 		t.Fatal("expected oversized upload to be rejected")
@@ -33,7 +33,7 @@ func TestNormalizePathRejectsTraversal(t *testing.T) {
 }
 
 func TestSaveRejectsImageOverPixelLimit(t *testing.T) {
-	storage := New(t.TempDir())
+	storage := New(t.TempDir(), rejectingNormalizer{})
 	img := pngWithDimensions(MaxImagePixels+1, 1)
 
 	_, err := storage.Save(context.Background(), "session-id", bytes.NewReader(img))
@@ -46,7 +46,7 @@ func TestSaveRejectsImageOverPixelLimit(t *testing.T) {
 }
 
 func TestSaveRejectsImageOverSideLimit(t *testing.T) {
-	storage := New(t.TempDir())
+	storage := New(t.TempDir(), rejectingNormalizer{})
 	img := pngWithDimensions(MaxImageSide+1, 1)
 
 	_, err := storage.Save(context.Background(), "session-id", bytes.NewReader(img))
