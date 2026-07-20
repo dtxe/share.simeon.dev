@@ -17,6 +17,7 @@ import { toUploadableImage } from '../lib/image'
 const EMPTY_PEOPLE: Person[] = []
 const EMPTY_DISHES: Dish[] = []
 const EMPTY_PORTIONS: Portion[] = []
+const MAX_CLIENT_RECEIPT_BYTES = 10 * 1024 * 1024
 
 type SectionId = 'receipt' | 'people' | 'total' | 'assign'
 const SECTION_ORDER: SectionId[] = ['receipt', 'people', 'total', 'assign']
@@ -34,6 +35,9 @@ function extractErrorMessage(err: unknown): string {
 }
 
 function uploadErrorMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 503) {
+    return 'Receipt processing is temporarily unavailable. Please try again.'
+  }
   if (err instanceof ApiError && err.message) return err.message
   return 'Upload failed. Try again.'
 }
@@ -151,12 +155,14 @@ export default function BillWorkspace() {
     setReceiptFlow(currentKey, { stage: 'uploading', error: null, retryable: false })
     try {
       const uploadable = await toUploadableImage(file)
-      if (!uploadable) {
-        setReceiptFlow(currentKey, { stage: 'failed', error: 'Could not read this photo. Try a JPEG or PNG instead.', retryable: true })
+      if (uploadable.size > MAX_CLIENT_RECEIPT_BYTES) {
+        setReceiptFlow(currentKey, {
+          stage: 'failed',
+          error: 'The processed photo is over the 10 MiB upload limit. Choose a smaller photo and try again.',
+          retryable: true,
+        })
         return
       }
-
-      console.log('[receipt] uploadable ready', { inputType: file.type, inputSize: file.size, inputName: file.name, outputType: uploadable.type, outputSize: uploadable.size })
 
       id = await ensure()
       setReceiptFlow(id, { stage: 'uploading', error: null, retryable: false })
@@ -170,7 +176,7 @@ export default function BillWorkspace() {
       invalidate(id)
       setReceiptFlow(id, { stage: 'done', error: result.items.length === 0 ? 'No items detected — add them below.' : null, retryable: false })
     } catch (err) {
-      console.error('[receipt] upload failed', { phase, inputType: file.type, inputSize: file.size, inputName: file.name, error: err })
+      console.error('[receipt] upload failed', { phase, inputType: file.type, inputSize: file.size, error: err })
       setReceiptFlow(id ?? currentKey, { stage: 'failed', error: phase === 'upload' ? uploadErrorMessage(err) : extractErrorMessage(err), retryable: phase === 'extract' ? !isExtractRefused(err) : true })
     }
   }

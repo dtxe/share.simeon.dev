@@ -1,6 +1,6 @@
 const MAX_IMAGE_PIXELS = 4096 * 2160
 const MAX_IMAGE_SIDE = 4096
-const JPEG_QUALITY = 0.9
+const JPEG_QUALITY = 0.95
 
 type DecodedImage = {
   source: CanvasImageSource
@@ -75,42 +75,102 @@ async function toJpegWithinKimiLimits(blob: Blob, forceJpeg: boolean): Promise<F
 
 // Safari/iOS decode HEIC natively at the OS level, which handles profiles
 // (HDR, Live Photo main image, 10-bit) that the heic2any WASM fallback
-// below doesn't. Try that path first via canvas; it's a silent no-op
-// (returns null) on browsers with no native HEIC support.
-async function heicToJpegViaCanvas(file: File): Promise<Blob | null> {
+// below doesn't. Try native decoding first via canvas; it's a silent no-op
+// (returns null) on browsers with no native HEIC/AVIF support.
+async function isoBmffToJpegViaCanvas(file: File): Promise<Blob | null> {
   return await toJpegWithinKimiLimits(file, true)
 }
 
-// iOS camera capture defaults to HEIC, which the backend can't decode.
+// iOS camera capture defaults to HEIC. Convert it in-browser when possible
+// to avoid uploading the larger original; the backend is the final fallback.
 // `file.type` is often empty for camera-captured HEIC in Safari, so sniff
 // the ftyp box too — extension alone misses mislabeled library exports.
-// Returns null if the file can't be converted — the server can't decode
-// HEIC either, so there's no point uploading it and getting a 400 back.
-const HEIC_BRANDS = new Set(['heic', 'heix', 'hevc', 'hevx', 'mif1', 'mif3', 'msf1', 'heim', 'heis', 'avic', 'avis'])
+// The server remains the final fallback if every client-side decoder fails.
+const ISO_BMFF_BRANDS = new Set([
+  'heic',
+  'heix',
+  'hevc',
+  'hevx',
+  'mif1',
+  'mif3',
+  'msf1',
+  'heim',
+  'heis',
+  'avif',
+  'avis',
+  'avic',
+])
 
-async function isHeicBlob(file: File): Promise<boolean> {
+type IsoBmffImage = 'heic' | 'avif'
+
+async function detectIsoBmffImage(file: File): Promise<IsoBmffImage | null> {
   if (file.type === 'image/heic' || file.type === 'image/heif' || /\.hei[cf]$/i.test(file.name)) {
-    return true
+    return 'heic'
   }
-  if (file.size < 12) return false
-  const header = new TextDecoder().decode(new Uint8Array(await file.slice(0, 12).arrayBuffer()).subarray(4, 12))
-  return header.startsWith('ftyp') && HEIC_BRANDS.has(header.slice(4, 8))
+  if (file.type === 'image/avif' || /\.avif$/i.test(file.name)) {
+    return 'avif'
+  }
+  // ftyp is normally the first box. Read only a small bounded prefix and
+  // inspect both major_brand and compatible_brands, rather than assuming a
+  // particular brand is always at bytes 8-12.
+  const prefix = new Uint8Array(await file.slice(0, Math.min(file.size, 64 * 1024)).arrayBuffer())
+  if (prefix.byteLength < 16) return null
+  const view = new DataView(prefix.buffer, prefix.byteOffset, prefix.byteLength)
+  if (view.getUint32(4, false) !== 0x66747970) return null // "ftyp"
+
+  const declaredSize = view.getUint32(0, false)
+  let boxEnd = declaredSize
+  let brandsOffset = 8
+  if (declaredSize === 1) {
+    if (prefix.byteLength < 24) return null
+    const extendedSize = view.getBigUint64(8, false)
+    if (extendedSize > BigInt(Number.MAX_SAFE_INTEGER)) return null
+    boxEnd = Number(extendedSize)
+    brandsOffset = 16
+    if (boxEnd < 24 || boxEnd > file.size) return null
+  } else if (boxEnd !== 0) {
+    if (boxEnd < 16 || boxEnd > file.size) return null
+  }
+  if (boxEnd === 0) boxEnd = file.size
+  const safeBoxEnd = Math.min(boxEnd, prefix.byteLength)
+  if (safeBoxEnd < brandsOffset + 8) return null
+
+  let heic = false
+  let avif = false
+  const brandAt = (offset: number) => new TextDecoder().decode(prefix.slice(offset, offset + 4))
+  const majorBrand = brandAt(brandsOffset)
+  if (ISO_BMFF_BRANDS.has(majorBrand)) {
+    if (majorBrand === 'avif' || majorBrand === 'avis' || majorBrand === 'avic') avif = true
+    else heic = true
+  }
+  // Skip minor_version; compatible brands begin after major_brand + minor_version.
+  for (let offset = brandsOffset + 8; offset + 4 <= safeBoxEnd; offset += 4) {
+    const brand = brandAt(offset)
+    if (!ISO_BMFF_BRANDS.has(brand)) continue
+    if (brand === 'avif' || brand === 'avis' || brand === 'avic') avif = true
+    else heic = true
+  }
+  return avif ? 'avif' : heic ? 'heic' : null
 }
 
-export async function toUploadableImage(file: File): Promise<File | Blob | null> {
-  if (await isHeicBlob(file)) {
-    const viaCanvas = await heicToJpegViaCanvas(file)
+export async function toUploadableImage(file: File): Promise<File | Blob> {
+  const isoBmffImage = await detectIsoBmffImage(file)
+  if (isoBmffImage) {
+    const viaCanvas = await isoBmffToJpegViaCanvas(file)
     if (viaCanvas) return viaCanvas
 
-    try {
-      const heic2any = (await import('heic2any')).default
-      const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: 0.9 })
-      const blob = Array.isArray(converted) ? converted[0] : converted
-      return await toJpegWithinKimiLimits(blob, true)
-    } catch (err) {
-      console.error('HEIC conversion failed', err)
-      return null
+    if (isoBmffImage === 'heic') {
+      try {
+        const heic2any = (await import('heic2any')).default
+        const converted = await heic2any({ blob: file, toType: 'image/jpeg', quality: JPEG_QUALITY })
+        const blob = Array.isArray(converted) ? converted[0] : converted
+        const convertedJpeg = await toJpegWithinKimiLimits(blob, true)
+        if (convertedJpeg) return convertedJpeg
+      } catch (err) {
+        console.error('HEIC/HEIF conversion failed', err)
+      }
     }
+    return file
   }
   return (await toJpegWithinKimiLimits(file, false)) ?? file
 }
