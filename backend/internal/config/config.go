@@ -402,7 +402,7 @@ func validateImageConverterURL(raw string) error {
 	if err != nil || u.Scheme != "http" || u.Host == "" || u.User != nil || u.Path != "" && u.Path != "/" || u.RawQuery != "" || u.Fragment != "" {
 		return fmt.Errorf("IMAGE_CONVERTER_URL must be an HTTP URL with an optional port and no path, query, fragment, or credentials")
 	}
-	if u.Hostname() == "localhost" || strings.ContainsAny(u.Hostname(), "/\\ \t\r\n") {
+	if strings.ContainsAny(u.Hostname(), "/\\ \t\r\n") {
 		return fmt.Errorf("IMAGE_CONVERTER_URL has invalid host")
 	}
 	return nil

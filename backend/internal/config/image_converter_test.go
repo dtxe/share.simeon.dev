@@ -3,7 +3,7 @@ package config
 import "testing"
 
 func TestValidateImageConverterURL(t *testing.T) {
-	for _, raw := range []string{"http://image-converter:8080", "http://converter", "http://converter:65535/"} {
+	for _, raw := range []string{"http://image-converter:8080", "http://converter", "http://converter:65535/", "http://localhost:8080"} {
 		if err := validateImageConverterURL(raw); err != nil {
 			t.Errorf("%q rejected: %v", raw, err)
 		}
