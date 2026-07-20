@@ -23,7 +23,7 @@ type Attempt struct {
 	PromptTok         int
 	CompleteTok       int
 	CostCents         *int
-	RawJSON           []byte // the parsed ExtractedReceipt, marshaled back
+	RawJSON           []byte // exact upstream chat-completions response body
 	Err               error  // non-nil if this attempt failed
 	SubtotalMatched   *bool
 	SubtotalDiffCents *int64

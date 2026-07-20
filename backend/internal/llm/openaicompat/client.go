@@ -16,6 +16,7 @@ import (
 	"log"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -51,6 +52,7 @@ const (
 	extractionReasoningBudgetTokens = 4000
 	kimiK2P7CodeModel               = "accounts/fireworks/models/kimi-k2p7-code"
 	minimaxM3Model                  = "accounts/fireworks/models/minimax-m3"
+	maxResponseBytes                = 4 << 20
 )
 
 type Client struct {
@@ -206,15 +208,15 @@ var extractionSchema = map[string]any{
 }
 
 func (c *Client) ExtractReceipt(ctx context.Context, image []byte, mimeType string) (*llm.Result, error) {
-	raw, usage, err := c.ExtractWithSchema(ctx, image, mimeType, extractionPromptForModel(c.Model), extractionSchema, extractionReasoningBudgetTokens)
+	raw, usage, attempts, err := c.extractWithSchema(ctx, image, mimeType, extractionPromptForModel(c.Model), extractionSchema, extractionReasoningBudgetTokens)
 	if err != nil {
 		return nil, err
 	}
 	receipt, err := decodeReceipt(raw)
 	if err != nil {
-		return nil, err
+		return nil, &llm.ResponseError{Err: err, Attempts: attempts}
 	}
-	return &llm.Result{Receipt: receipt, Usage: usage}, nil
+	return &llm.Result{Receipt: receipt, Usage: usage, RawResponse: attempts[len(attempts)-1].RawResponse, Attempts: attempts}, nil
 }
 
 // ExtractAttemptResult is one LLM call's outcome, including the tool_call_id
@@ -225,6 +227,8 @@ type ExtractAttemptResult struct {
 	Receipt      llm.ExtractedReceipt
 	RawArguments json.RawMessage
 	Usage        llm.Usage
+	RawResponse  []byte
+	Attempts     []llm.Attempt
 }
 
 // ExtractReceiptAttempt is ExtractReceipt plus the tool_call_id and raw
@@ -233,15 +237,15 @@ type ExtractAttemptResult struct {
 // this first call is identical to the baseline pipeline.
 func (c *Client) ExtractReceiptAttempt(ctx context.Context, image []byte, mimeType string) (*ExtractAttemptResult, error) {
 	messages := []chatMessage{buildUserMessage(extractionPromptForModel(c.Model), image, mimeType)}
-	toolCallID, raw, usage, err := c.doExtract(ctx, messages, extractionSchema, extractionReasoningBudgetTokens)
+	toolCallID, raw, usage, attempts, err := c.doExtract(ctx, messages, extractionSchema, extractionReasoningBudgetTokens)
 	if err != nil {
 		return nil, err
 	}
 	receipt, err := decodeReceipt(raw)
 	if err != nil {
-		return nil, err
+		return nil, &llm.ResponseError{Err: err, Attempts: attempts}
 	}
-	return &ExtractAttemptResult{ToolCallID: toolCallID, Receipt: receipt, RawArguments: raw, Usage: usage}, nil
+	return &ExtractAttemptResult{ToolCallID: toolCallID, Receipt: receipt, RawArguments: raw, Usage: usage, RawResponse: attempts[len(attempts)-1].RawResponse, Attempts: attempts}, nil
 }
 
 // ExtractReceiptFeedback is a second look at the same image: it replays the
@@ -270,15 +274,15 @@ func (c *Client) ExtractReceiptFeedback(ctx context.Context, image []byte, mimeT
 		},
 		buildUserMessage(feedback, image, mimeType),
 	}
-	toolCallID, raw, usage, err := c.doExtract(ctx, messages, extractionSchema, extractionReasoningBudgetTokens)
+	toolCallID, raw, usage, attempts, err := c.doExtract(ctx, messages, extractionSchema, extractionReasoningBudgetTokens)
 	if err != nil {
 		return nil, err
 	}
 	receipt, err := decodeReceipt(raw)
 	if err != nil {
-		return nil, err
+		return nil, &llm.ResponseError{Err: err, Attempts: attempts}
 	}
-	return &ExtractAttemptResult{ToolCallID: toolCallID, Receipt: receipt, RawArguments: raw, Usage: usage}, nil
+	return &ExtractAttemptResult{ToolCallID: toolCallID, Receipt: receipt, RawArguments: raw, Usage: usage, RawResponse: attempts[len(attempts)-1].RawResponse, Attempts: attempts}, nil
 }
 
 func decodeReceipt(raw json.RawMessage) (llm.ExtractedReceipt, error) {
@@ -310,33 +314,40 @@ func buildUserMessage(text string, image []byte, mimeType string) chatMessage {
 // struct. ExtractReceipt is itself just this called with the baseline
 // prompt/schema/budget, decoded into llm.ExtractedReceipt.
 func (c *Client) ExtractWithSchema(ctx context.Context, image []byte, mimeType, prompt string, schema map[string]any, thinkingBudgetTokens int) (json.RawMessage, llm.Usage, error) {
-	_, raw, usage, err := c.doExtract(ctx, []chatMessage{buildUserMessage(prompt, image, mimeType)}, schema, thinkingBudgetTokens)
+	_, raw, usage, _, err := c.doExtract(ctx, []chatMessage{buildUserMessage(prompt, image, mimeType)}, schema, thinkingBudgetTokens)
 	return raw, usage, err
+}
+
+func (c *Client) extractWithSchema(ctx context.Context, image []byte, mimeType, prompt string, schema map[string]any, thinkingBudgetTokens int) (json.RawMessage, llm.Usage, []llm.Attempt, error) {
+	_, raw, usage, attempts, err := c.doExtract(ctx, []chatMessage{buildUserMessage(prompt, image, mimeType)}, schema, thinkingBudgetTokens)
+	return raw, usage, attempts, err
 }
 
 // doExtract is the shared request/response plumbing (HTTP call, forced
 // tool-call decode, finish_reason:"length" handling) behind every extraction
 // call, single- or multi-turn — only the messages, schema, and thinking
 // budget differ between callers.
-func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema map[string]any, thinkingBudgetTokens int) (toolCallID string, args json.RawMessage, usage llm.Usage, err error) {
+func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema map[string]any, thinkingBudgetTokens int) (toolCallID string, args json.RawMessage, usage llm.Usage, attempts []llm.Attempt, err error) {
 	tools := extractionTools(schema)
-	first, usage, err := c.chat(ctx, messages, tools, toolChoice{Required: true}, thinkingBudgetTokens)
+	first, firstRaw, firstUsage, err := c.chat(ctx, messages, tools, toolChoice{Required: true}, thinkingBudgetTokens)
+	usage = firstUsage
+	attempts = append(attempts, llm.Attempt{RawResponse: firstRaw, Usage: firstUsage})
 	if err != nil {
-		return "", nil, usage, err
+		return "", nil, usage, attempts, &llm.ResponseError{Err: err, Attempts: attempts}
 	}
 	if len(first.Choices[0].Message.ToolCalls) == 0 {
-		return "", nil, usage, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", first.Choices[0].Message.Content)
+		return "", nil, usage, attempts, &llm.ResponseError{Err: fmt.Errorf("openaicompat: model returned no tool call (content: %s)", first.Choices[0].Message.Content), Attempts: attempts}
 	}
 	call := first.Choices[0].Message.ToolCalls[0]
 	if call.Function.Name == extractFunctionName {
-		return normalizedToolCallID(call.ID), json.RawMessage(call.Function.Arguments), usage, nil
+		return normalizedToolCallID(call.ID), json.RawMessage(call.Function.Arguments), usage, attempts, nil
 	}
 	if call.Function.Name != interimCalculationFunctionName {
-		return "", nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name)
+		return "", nil, usage, attempts, &llm.ResponseError{Err: fmt.Errorf("openaicompat: unexpected tool call %q", call.Function.Name), Attempts: attempts}
 	}
 	calculation, err := calculateInterim(call.Function.Arguments)
 	if err != nil {
-		return "", nil, usage, err
+		return "", nil, usage, attempts, &llm.ResponseError{Err: err, Attempts: attempts}
 	}
 	callID := normalizedToolCallID(call.ID)
 	messages = append(messages,
@@ -345,20 +356,21 @@ func (c *Client) doExtract(ctx context.Context, messages []chatMessage, schema m
 		}}},
 		chatMessage{Role: "tool", ToolCallID: callID, Content: []contentPart{{Type: "text", Text: calculation}}},
 	)
-	final, finalUsage, err := c.chat(ctx, messages, tools, toolChoice{Type: "function", Function: toolChoiceTarget{Name: extractFunctionName}}, thinkingBudgetTokens)
+	final, finalRaw, finalUsage, err := c.chat(ctx, messages, tools, toolChoice{Type: "function", Function: toolChoiceTarget{Name: extractFunctionName}}, thinkingBudgetTokens)
+	attempts = append(attempts, llm.Attempt{RawResponse: finalRaw, Usage: finalUsage})
 	usage.PromptTokens += finalUsage.PromptTokens
 	usage.CompletionTokens += finalUsage.CompletionTokens
 	if err != nil {
-		return "", nil, usage, err
+		return "", nil, usage, attempts, &llm.ResponseError{Err: err, Attempts: attempts}
 	}
 	if len(final.Choices[0].Message.ToolCalls) == 0 {
-		return "", nil, usage, fmt.Errorf("openaicompat: model returned no tool call (content: %s)", final.Choices[0].Message.Content)
+		return "", nil, usage, attempts, &llm.ResponseError{Err: fmt.Errorf("openaicompat: model returned no tool call (content: %s)", final.Choices[0].Message.Content), Attempts: attempts}
 	}
 	finalCall := final.Choices[0].Message.ToolCalls[0]
 	if finalCall.Function.Name != extractFunctionName {
-		return "", nil, usage, fmt.Errorf("openaicompat: unexpected tool call %q", finalCall.Function.Name)
+		return "", nil, usage, attempts, &llm.ResponseError{Err: fmt.Errorf("openaicompat: unexpected tool call %q", finalCall.Function.Name), Attempts: attempts}
 	}
-	return normalizedToolCallID(finalCall.ID), json.RawMessage(finalCall.Function.Arguments), usage, nil
+	return normalizedToolCallID(finalCall.ID), json.RawMessage(finalCall.Function.Arguments), usage, attempts, nil
 }
 
 func extractionTools(schema map[string]any) []toolDef {
@@ -392,7 +404,7 @@ func extractionTools(schema map[string]any) []toolDef {
 	}
 }
 
-func (c *Client) chat(ctx context.Context, messages []chatMessage, tools []toolDef, choice toolChoice, thinkingBudgetTokens int) (chatResponse, llm.Usage, error) {
+func (c *Client) chat(ctx context.Context, messages []chatMessage, tools []toolDef, choice toolChoice, thinkingBudgetTokens int) (chatResponse, []byte, llm.Usage, error) {
 	reqBody := chatRequest{
 		Model:          c.Model,
 		Messages:       messages,
@@ -404,25 +416,31 @@ func (c *Client) chat(ctx context.Context, messages []chatMessage, tools []toolD
 	}
 	body, err := json.Marshal(reqBody)
 	if err != nil {
-		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: marshal request: %w", err)
+		return chatResponse{}, nil, llm.Usage{}, fmt.Errorf("openaicompat: marshal request: %w", err)
 	}
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: build request: %w", err)
+		return chatResponse{}, nil, llm.Usage{}, fmt.Errorf("openaicompat: build request: %w", err)
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
 
 	resp, err := c.HTTPClient.Do(httpReq)
 	if err != nil {
-		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: request failed: %w", err)
+		return chatResponse{}, nil, llm.Usage{}, fmt.Errorf("openaicompat: request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	respBody, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
+	// Keep a hard bound: provider responses should be small, and this also
+	// prevents an upstream from turning extraction into an unbounded read. The
+	// sentinel byte is retained in telemetry so the bounded response is clear.
+	respBody, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes+1))
 	if err != nil {
-		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: reading response: %w", err)
+		return chatResponse{}, respBody, llm.Usage{}, fmt.Errorf("openaicompat: reading response: %w", err)
+	}
+	if len(respBody) > maxResponseBytes {
+		return chatResponse{}, respBody, llm.Usage{}, fmt.Errorf("openaicompat: response exceeds %d-byte limit", maxResponseBytes)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -434,15 +452,15 @@ func (c *Client) chat(ctx context.Context, messages []chatMessage, tools []toolD
 		if len(snippet) > 500 {
 			snippet = snippet[:500]
 		}
-		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
+		return chatResponse{}, respBody, llm.Usage{}, fmt.Errorf("openaicompat: upstream status %d: %s", resp.StatusCode, snippet)
 	}
 
 	var chatResp chatResponse
 	if err := json.Unmarshal(respBody, &chatResp); err != nil {
-		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: decoding response envelope: %w", err)
+		return chatResponse{}, respBody, llm.Usage{}, fmt.Errorf("openaicompat: decoding response envelope: %w", err)
 	}
 	if len(chatResp.Choices) == 0 {
-		return chatResponse{}, llm.Usage{}, fmt.Errorf("openaicompat: no choices in response")
+		return chatResponse{}, respBody, llm.Usage{}, fmt.Errorf("openaicompat: no choices in response")
 	}
 
 	usage := llm.Usage{
@@ -455,7 +473,7 @@ func (c *Client) chat(ctx context.Context, messages []chatMessage, tools []toolD
 			c.Model, chatResp.Usage.CompletionTokens, thinkingBudgetTokens)
 	}
 
-	return chatResp, usage, nil
+	return chatResp, respBody, usage, nil
 }
 
 func normalizedToolCallID(id string) string {
@@ -472,6 +490,70 @@ type interimCalculationInput struct {
 type interimCalculationItem struct {
 	Price    *int64       `json:"p"`
 	Quantity *json.Number `json:"n"`
+}
+
+// UnmarshalJSON tolerates a common model quirk: an integer schema value is
+// emitted as 1200.0. It deliberately does not accept quoted prices or currency
+// strings; calculator inputs remain numeric and bounded by the normal checks.
+func (i *interimCalculationItem) UnmarshalJSON(data []byte) error {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return err
+	}
+	for key := range fields {
+		if key != "p" && key != "n" {
+			return fmt.Errorf("unknown field %q", key)
+		}
+	}
+	var quantity *json.Number
+	if n, ok := fields["n"]; ok {
+		var parsed json.Number
+		if err := json.Unmarshal(n, &parsed); err != nil {
+			return err
+		}
+		if parsed == "" {
+			return fmt.Errorf("n must be a numeric quantity")
+		}
+		if value, err := parsed.Float64(); err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+			return fmt.Errorf("n must be a finite numeric quantity")
+		}
+		quantity = &parsed
+	}
+	p, ok := fields["p"]
+	if !ok {
+		i.Quantity = quantity
+		return nil
+	}
+	trimmed := bytes.TrimSpace(p)
+	if len(trimmed) == 0 || trimmed[0] == '"' {
+		return fmt.Errorf("p must be a numeric integer")
+	}
+	value, err := parseIntegralPrice(string(trimmed))
+	if err != nil {
+		return fmt.Errorf("p must be a non-negative integer")
+	}
+	i.Price = new(int64)
+	*i.Price = value
+	i.Quantity = quantity
+	return nil
+}
+
+func parseIntegralPrice(raw string) (int64, error) {
+	if raw == "" || strings.ContainsAny(raw, "eE+") {
+		return 0, fmt.Errorf("price is not a plain number")
+	}
+	parts := strings.Split(raw, ".")
+	if len(parts) > 2 || parts[0] == "" {
+		return 0, fmt.Errorf("price is not a decimal")
+	}
+	if len(parts) == 2 && strings.Trim(parts[1], "0") != "" {
+		return 0, fmt.Errorf("price is not integral")
+	}
+	value, err := strconv.ParseUint(parts[0], 10, 63)
+	if err != nil || value > math.MaxInt64 {
+		return 0, fmt.Errorf("price overflows cents")
+	}
+	return int64(value), nil
 }
 
 func calculateInterim(raw string) (string, error) {

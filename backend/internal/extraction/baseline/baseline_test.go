@@ -69,3 +69,22 @@ func TestRunPreservesFailedAttemptMetadata(t *testing.T) {
 		t.Fatalf("failed attempt cost = %v, want unknown", attempt.CostCents)
 	}
 }
+
+func TestRunMarksOnlyFinalCapturedTurnAsFailed(t *testing.T) {
+	wantErr := errors.New("final provider turn failed")
+	strategy := New(fakeProvider{err: &llm.ResponseError{
+		Err: wantErr,
+		Attempts: []llm.Attempt{
+			{RawResponse: []byte(`{"first":true}`), Usage: llm.Usage{PromptTokens: 10, CompletionTokens: 2}},
+			{RawResponse: []byte(`{"second":true}`)},
+		},
+	}}, "fake-model", 1, 1)
+
+	result, err := strategy.Run(context.Background(), []byte("image"), "image/jpeg")
+	if !errors.Is(err, wantErr) || len(result.Attempts) != 2 {
+		t.Fatalf("Run = %v, attempts=%d", err, len(result.Attempts))
+	}
+	if result.Attempts[0].Err != nil || !errors.Is(result.Attempts[1].Err, wantErr) {
+		t.Fatalf("turn errors = %v, %v", result.Attempts[0].Err, result.Attempts[1].Err)
+	}
+}

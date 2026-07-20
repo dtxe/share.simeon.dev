@@ -3,11 +3,14 @@ package openaicompat
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"share/backend/internal/llm"
 )
 
 func TestExtractReceiptParsesResponse(t *testing.T) {
@@ -96,6 +99,24 @@ func TestExtractReceiptParsesResponse(t *testing.T) {
 	}
 	if result.Usage.PromptTokens != 500 || result.Usage.CompletionTokens != 80 {
 		t.Errorf("unexpected usage: %+v", result.Usage)
+	}
+}
+
+func TestExtractReceiptPreservesExactUpstreamResponse(t *testing.T) {
+	raw := `{"choices":[{"message":{"tool_calls":[{"id":"call_raw","function":{"name":"extract_receipt","arguments":"{\"items\":[]}"}}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":3}}
+`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(raw))
+	}))
+	defer srv.Close()
+
+	result, err := New(srv.URL, "key", "model").ExtractReceipt(context.Background(), []byte("image"), "image/jpeg")
+	if err != nil {
+		t.Fatalf("ExtractReceipt: %v", err)
+	}
+	if string(result.RawResponse) != raw || len(result.Attempts) != 1 || string(result.Attempts[0].RawResponse) != raw {
+		t.Fatalf("raw response was not preserved exactly: result=%q attempts=%q", result.RawResponse, result.Attempts[0].RawResponse)
 	}
 }
 
@@ -292,6 +313,23 @@ func TestExtractReceiptUpstreamErrorStatus(t *testing.T) {
 	}
 }
 
+func TestExtractReceiptBoundsOversizedResponseAndPreservesBoundedBody(t *testing.T) {
+	body := strings.Repeat("x", maxResponseBytes+100)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, body)
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, "key", "model").ExtractReceiptAttempt(context.Background(), []byte("image"), "image/jpeg")
+	var responseErr *llm.ResponseError
+	if !errors.As(err, &responseErr) || len(responseErr.Attempts) != 1 {
+		t.Fatalf("expected bounded response error, got err=%v response=%#v", err, responseErr)
+	}
+	if len(responseErr.Attempts[0].RawResponse) != maxResponseBytes+1 || string(responseErr.Attempts[0].RawResponse) != body[:maxResponseBytes+1] {
+		t.Fatalf("bounded raw response length/content = %d/%q", len(responseErr.Attempts[0].RawResponse), responseErr.Attempts[0].RawResponse[:min(20, len(responseErr.Attempts[0].RawResponse))])
+	}
+}
+
 func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeReceiptResponse(t, w, `{"items":[],"unexpected_field":"should cause a decode error"}`)
@@ -325,8 +363,15 @@ func TestCalculateInterimAcceptsSingletonItem(t *testing.T) {
 	}
 }
 
+func TestCalculateInterimAcceptsIntegralDecimalPrice(t *testing.T) {
+	got, err := calculateInterim(`{"item":[{"p":1200.0,"n":1}]}`)
+	if err != nil || got != `{"subtotalCents":1200}` {
+		t.Fatalf("calculateInterim = %q, err=%v", got, err)
+	}
+}
+
 func TestCalculateInterimRejectsInvalidArguments(t *testing.T) {
-	for _, raw := range []string{`{"item":[{"p":1}]}`, `{"item":[{"p":-1,"n":1}]}`, `{"item":[{"p":1,"n":"one"}]}`, `{"item":[{"p":1,"n":1,"x":2}]}`, `{"item":[]} {"extra":true}`} {
+	for _, raw := range []string{`{"item":[{"p":1}]}`, `{"item":[{"n":"one"}]}`, `{"item":[{"p":-1,"n":1}]}`, `{"item":[{"p":"1","n":1}]}`, `{"item":[{"p":1,"n":"one"}]}`, `{"item":[{"p":1,"n":1,"x":2}]}`, `{"item":[]} {"extra":true}`} {
 		if _, err := calculateInterim(raw); err == nil {
 			t.Errorf("calculateInterim(%s) accepted invalid arguments", raw)
 		}
@@ -387,6 +432,21 @@ func TestExtractReceiptCalculatorTurn(t *testing.T) {
 	}
 	if result.Usage.PromptTokens != 34 || result.Usage.CompletionTokens != 20 {
 		t.Fatalf("usage = %+v, want 34 prompt/20 completion", result.Usage)
+	}
+}
+
+func TestMalformedCalculatorPreservesItsUpstreamResponse(t *testing.T) {
+	raw := `{"choices":[{"message":{"tool_calls":[{"id":"calc_bad","function":{"name":"interim_calculation","arguments":"{\"item\":[{\"p\":\"$12.00\",\"n\":1}]}"}}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":19,"completion_tokens":8}}`
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(raw))
+	}))
+	defer srv.Close()
+
+	_, err := New(srv.URL, "key", "model").ExtractReceiptAttempt(context.Background(), []byte("image"), "image/jpeg")
+	var responseErr *llm.ResponseError
+	if !errors.As(err, &responseErr) || len(responseErr.Attempts) != 1 || string(responseErr.Attempts[0].RawResponse) != raw {
+		t.Fatalf("malformed calculator response telemetry = %#v, err=%v", responseErr, err)
 	}
 }
 

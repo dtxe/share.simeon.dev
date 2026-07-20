@@ -9,6 +9,7 @@ package baseline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"share/backend/internal/extraction"
 	"share/backend/internal/llm"
@@ -37,6 +38,18 @@ func (s *Strategy) MaxCalls() int { return 2 }
 func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (extraction.RunResult, error) {
 	result, err := s.LLM.ExtractReceipt(ctx, image, mimeType)
 	if err != nil {
+		var responseErr *llm.ResponseError
+		if errors.As(err, &responseErr) && len(responseErr.Attempts) > 0 {
+			attempts := make([]extraction.Attempt, 0, len(responseErr.Attempts))
+			for i, call := range responseErr.Attempts {
+				var callErr error
+				if i == len(responseErr.Attempts)-1 {
+					callErr = err
+				}
+				attempts = append(attempts, s.buildCallAttempt(call, callErr))
+			}
+			return extraction.RunResult{Attempts: attempts}, err
+		}
 		return extraction.RunResult{
 			Attempts: []extraction.Attempt{{
 				Provider: s.LLM.Name(),
@@ -46,26 +59,42 @@ func (s *Strategy) Run(ctx context.Context, image []byte, mimeType string) (extr
 		}, err
 	}
 
-	costCents := extraction.EstimateCostCents(result.Usage.PromptTokens, result.Usage.CompletionTokens, s.InputCostPer1KTokensCents, s.OutputCostPer1KTokensCents)
-	rawJSON, _ := json.Marshal(result.Receipt)
-
 	matched, diffCents := extraction.CheckSubtotal(result.Receipt.Items, result.Receipt.SubtotalCents)
+	callResults := result.Attempts
+	if len(callResults) == 0 {
+		raw := result.RawResponse
+		if len(raw) == 0 { // legacy providers do not expose upstream bytes.
+			raw, _ = json.Marshal(result.Receipt)
+		}
+		callResults = []llm.Attempt{{RawResponse: raw, Usage: result.Usage}}
+	}
+	attempts := make([]extraction.Attempt, 0, len(callResults))
+	for i, call := range callResults {
+		var callErr error
+		if i == len(callResults)-1 {
+			callErr = err
+		}
+		attempt := s.buildCallAttempt(call, callErr)
+		if i == len(callResults)-1 {
+			attempt.SubtotalMatched = &matched
+			attempt.SubtotalDiffCents = &diffCents
+		}
+		attempts = append(attempts, attempt)
+	}
 
 	return extraction.RunResult{
-		Receipt: result.Receipt,
-		Attempts: []extraction.Attempt{
-			{
-				Provider:          s.LLM.Name(),
-				Model:             s.ModelName,
-				PromptTok:         result.Usage.PromptTokens,
-				CompleteTok:       result.Usage.CompletionTokens,
-				CostCents:         &costCents,
-				RawJSON:           rawJSON,
-				SubtotalMatched:   &matched,
-				SubtotalDiffCents: &diffCents,
-			},
-		},
+		Receipt:           result.Receipt,
+		Attempts:          attempts,
 		SubtotalMatched:   &matched,
 		SubtotalDiffCents: &diffCents,
 	}, nil
+}
+
+func (s *Strategy) buildCallAttempt(call llm.Attempt, err error) extraction.Attempt {
+	var cost *int
+	if err == nil || call.Usage.PromptTokens > 0 || call.Usage.CompletionTokens > 0 {
+		value := extraction.EstimateCostCents(call.Usage.PromptTokens, call.Usage.CompletionTokens, s.InputCostPer1KTokensCents, s.OutputCostPer1KTokensCents)
+		cost = &value
+	}
+	return extraction.Attempt{Provider: s.LLM.Name(), Model: s.ModelName, PromptTok: call.Usage.PromptTokens, CompleteTok: call.Usage.CompletionTokens, CostCents: cost, RawJSON: call.RawResponse, Err: err}
 }

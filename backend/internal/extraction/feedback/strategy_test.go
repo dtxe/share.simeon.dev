@@ -197,3 +197,31 @@ func TestRunReportsFailedFirstAttempt(t *testing.T) {
 		t.Fatalf("expected 1 failed attempt, got %+v", result.Attempts)
 	}
 }
+
+func TestRunKeepsCalculatorTurnSuccessfulWhenFinalTurnFails(t *testing.T) {
+	var callCount int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		callCount++
+		if callCount == 1 {
+			resp := map[string]any{
+				"choices": []map[string]any{{"message": map[string]any{"tool_calls": []map[string]any{{"id": "calc_1", "function": map[string]any{"name": "interim_calculation", "arguments": `{"item":[{"p":1200,"n":1}]}`}}}}, "finish_reason": "stop"}},
+				"usage":   map[string]any{"prompt_tokens": 20, "completion_tokens": 5},
+			}
+			_ = json.NewEncoder(w).Encode(resp)
+			return
+		}
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"error":"final failed"}`))
+	}))
+	defer srv.Close()
+
+	client := openaicompat.New(srv.URL, "test-key", fakeMinimaxModel)
+	strategy := New(client, "fireworks", fakeMinimaxModel, 1, 1)
+	result, err := strategy.Run(context.Background(), []byte("image"), "image/jpeg")
+	if err == nil || len(result.Attempts) != 2 {
+		t.Fatalf("expected two turns and an error, got err=%v attempts=%d", err, len(result.Attempts))
+	}
+	if result.Attempts[0].Err != nil || result.Attempts[1].Err == nil {
+		t.Fatalf("turn errors = %v, %v; only final turn should fail", result.Attempts[0].Err, result.Attempts[1].Err)
+	}
+}

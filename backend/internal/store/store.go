@@ -873,6 +873,8 @@ func (s *Store) CompleteExtractionRun(ctx context.Context, in CompleteExtraction
 	for _, a := range in.Attempts {
 		var rawResponse any
 		if len(a.RawResponse) > 0 {
+			// raw_response is BYTEA, not JSONB: JSONB would normalize the body
+			// and lose the exact upstream bytes we are troubleshooting.
 			rawResponse = a.RawResponse
 		}
 		if _, err := tx.Exec(ctx, `

@@ -28,9 +28,29 @@ type Usage struct {
 	CompletionTokens int
 }
 
+// Attempt is one upstream chat-completions response. RawResponse is the
+// response body exactly as received (it never contains the request/image).
+type Attempt struct {
+	RawResponse []byte
+	Usage       Usage
+}
+
+// ResponseError preserves responses received before a provider-side or
+// client-side response validation error.
+type ResponseError struct {
+	Err      error
+	Attempts []Attempt
+}
+
+func (e *ResponseError) Error() string { return e.Err.Error() }
+func (e *ResponseError) Unwrap() error { return e.Err }
+
 type Result struct {
-	Receipt ExtractedReceipt
-	Usage   Usage
+	Receipt     ExtractedReceipt
+	Usage       Usage
+	RawResponse []byte
+	// Attempts includes every upstream turn made by this operation.
+	Attempts []Attempt
 }
 
 type Provider interface {
