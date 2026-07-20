@@ -73,6 +73,30 @@ func TestLoadDefaultsToKimiK2P7Pricing(t *testing.T) {
 	}
 }
 
+func TestLoadRateLimitsEnabledDefaultsTrue(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RATE_LIMITS_ENABLED", "")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.RateLimitsEnabled {
+		t.Fatal("RateLimitsEnabled defaulted to false")
+	}
+}
+
+func TestLoadRateLimitsEnabledCanBeDisabled(t *testing.T) {
+	setRequiredEnv(t)
+	t.Setenv("RATE_LIMITS_ENABLED", "false")
+	cfg, err := Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.RateLimitsEnabled {
+		t.Fatal("RateLimitsEnabled remained true")
+	}
+}
+
 func TestLoadUsesSupportedModelPricing(t *testing.T) {
 	setRequiredEnv(t)
 	t.Setenv("LLM_MODEL", "accounts/fireworks/models/kimi-k2p7-code")

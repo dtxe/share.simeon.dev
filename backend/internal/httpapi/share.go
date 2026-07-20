@@ -36,9 +36,11 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 
 	sess, result, err := s.Store.GetBreakdownByViewToken(r.Context(), token)
 	if err != nil {
-		if allowed, rlErr := s.RL.AllowInvalidViewTokenPerIP(r.Context(), ip); rlErr == nil && !allowed {
-			writeJSONError(w, http.StatusTooManyRequests, "too many requests")
-			return
+		if s.Cfg.RateLimitsEnabled {
+			if allowed, rlErr := s.RL.AllowInvalidViewTokenPerIP(r.Context(), ip); rlErr == nil && !allowed {
+				writeJSONError(w, http.StatusTooManyRequests, "too many requests")
+				return
+			}
 		}
 		writeJSONError(w, http.StatusNotFound, "not found")
 		return

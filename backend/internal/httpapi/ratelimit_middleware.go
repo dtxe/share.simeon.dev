@@ -14,6 +14,10 @@ import (
 
 func (s *Server) globalRateLimit(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.Cfg.RateLimitsEnabled {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ip := auth.ClientIP(r, s.Cfg.TrustedProxy, s.Cfg.RealIPHeader)
 		ok, err := s.RL.AllowGlobalPerIP(r.Context(), ip)
 		if err != nil {
@@ -31,6 +35,10 @@ func (s *Server) globalRateLimit(next http.Handler) http.Handler {
 
 func (s *Server) rateLimitOTPRequest(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.Cfg.RateLimitsEnabled {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ip := auth.ClientIP(r, s.Cfg.TrustedProxy, s.Cfg.RealIPHeader)
 		ok, err := s.RL.AllowOTPRequestPerIP(r.Context(), ip, s.Cfg.OTPRequestRatePerIPPerHr)
 		if err != nil {
@@ -48,6 +56,10 @@ func (s *Server) rateLimitOTPRequest(next http.Handler) http.Handler {
 
 func (s *Server) rateLimitOTPVerify(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if !s.Cfg.RateLimitsEnabled {
+			next.ServeHTTP(w, r)
+			return
+		}
 		ip := auth.ClientIP(r, s.Cfg.TrustedProxy, s.Cfg.RealIPHeader)
 		ok, err := s.RL.AllowOTPVerifyPerIP(r.Context(), ip, s.Cfg.OTPVerifyRatePerIPPerHr)
 		if err != nil {

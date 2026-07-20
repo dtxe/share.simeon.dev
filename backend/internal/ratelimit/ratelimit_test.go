@@ -454,3 +454,71 @@ func TestAllowWindowResets(t *testing.T) {
 		t.Fatalf("expected window to have reset after expiry")
 	}
 }
+
+func TestExtractionWindows(t *testing.T) {
+	if len(extractionWindows) != 3 {
+		t.Fatalf("got %d extraction windows, want 3", len(extractionWindows))
+	}
+	want := []struct {
+		name      string
+		threshold int
+		duration  time.Duration
+	}{
+		{"hour", 10, time.Hour},
+		{"day", 20, 24 * time.Hour},
+		{"month", 50, 30 * 24 * time.Hour},
+	}
+	for i, w := range extractionWindows {
+		if w.Name != want[i].name || w.Threshold != want[i].threshold || w.Duration != want[i].duration {
+			t.Errorf("window %d = %#v, want name=%q threshold=%d duration=%s", i, w, want[i].name, want[i].threshold, want[i].duration)
+		}
+	}
+}
+
+func TestAllowExtractPerIPDetailedReportsExhaustedWindow(t *testing.T) {
+	l := newTestLimiter(t)
+	ctx := context.Background()
+	ip := "test-extract-" + uniqueKeySuffix()
+	keys := make([]string, 0, len(extractionWindows))
+	for _, window := range extractionWindows {
+		keys = append(keys, "rl:extract:ip:"+window.Name+":"+ip)
+	}
+	t.Cleanup(func() { _ = l.rdb.Del(ctx, keys...).Err() })
+
+	for _, tc := range []struct {
+		name   string
+		window ExtractionWindow
+		prime  bool
+	}{
+		{name: "hour", window: extractionWindows[0]},
+		{name: "day", window: extractionWindows[1], prime: true},
+		{name: "month", window: extractionWindows[2], prime: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := l.rdb.Del(ctx, keys...).Err(); err != nil {
+				t.Fatalf("clear keys: %v", err)
+			}
+			if tc.prime {
+				key := "rl:extract:ip:" + tc.window.Name + ":" + ip
+				if err := l.rdb.Set(ctx, key, tc.window.Threshold, tc.window.Duration).Err(); err != nil {
+					t.Fatalf("prime %s window: %v", tc.name, err)
+				}
+			} else {
+				for i := 0; i < tc.window.Threshold; i++ {
+					allowed, _, _, err := l.AllowExtractPerIPDetailed(ctx, ip)
+					if err != nil || !allowed {
+						t.Fatalf("attempt %d: allowed=%v err=%v", i+1, allowed, err)
+					}
+				}
+			}
+
+			allowed, window, threshold, err := l.AllowExtractPerIPDetailed(ctx, ip)
+			if err != nil {
+				t.Fatalf("AllowExtractPerIPDetailed: %v", err)
+			}
+			if allowed || window != tc.window.Name || threshold != tc.window.Threshold {
+				t.Fatalf("result = allowed=%v window=%q threshold=%d, want false, %q, %d", allowed, window, threshold, tc.window.Name, tc.window.Threshold)
+			}
+		})
+	}
+}
