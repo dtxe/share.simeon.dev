@@ -52,7 +52,7 @@ export default function BillWorkspace() {
   const qc = useQueryClient()
   const ensure = useEnsureSession(routeId)
 
-  const { data, error } = useQuery({
+  const { data, error, isLoading } = useQuery({
     queryKey: ['session', routeId],
     queryFn: () => api.getSession(routeId!),
     enabled: !!routeId,
@@ -292,6 +292,7 @@ export default function BillWorkspace() {
       >
         <ReceiptSection
           hasReceipt={session?.hasReceipt ?? false}
+          loading={isLoading}
           receiptUrl={routeId && session?.hasReceipt ? api.receiptUrl(routeId) : null}
           subtotalCents={session?.subtotalCents ?? 0}
           dishes={dishes}

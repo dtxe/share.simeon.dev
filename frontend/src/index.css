@@ -56,3 +56,25 @@ button {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
 }
+
+@keyframes loading-gradient {
+  from {
+    background-position: 0% 50%;
+  }
+
+  to {
+    background-position: 100% 50%;
+  }
+}
+
+.loading-box {
+  animation: loading-gradient 1.8s ease-in-out infinite alternate;
+  background: linear-gradient(90deg, #f8f7f5 0%, #eeece8 50%, #f8f7f5 100%);
+  background-size: 200% 100%;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .loading-box {
+    animation: none;
+  }
+}

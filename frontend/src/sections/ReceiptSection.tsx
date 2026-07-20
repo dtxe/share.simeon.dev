@@ -9,6 +9,7 @@ export type ReceiptStage = 'idle' | 'uploading' | 'parsing' | 'done' | 'failed'
 
 export function ReceiptSection({
   hasReceipt,
+  loading,
   receiptUrl,
   subtotalCents,
   dishes,
@@ -22,6 +23,7 @@ export function ReceiptSection({
   onDeleteDish,
 }: {
   hasReceipt: boolean
+  loading: boolean
   receiptUrl: string | null
   subtotalCents: number
   dishes: Dish[]
@@ -78,7 +80,9 @@ export function ReceiptSection({
     <div className="flex flex-col gap-3">
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
 
-      {!hasReceipt && (
+      {loading && !hasReceipt ? (
+        <div className="loading-box h-12 rounded-lg border border-[var(--color-border)]" aria-label="Loading receipt" />
+      ) : !hasReceipt && (
         <button
           type="button"
           onClick={() => fileInputRef.current?.click()}
