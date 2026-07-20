@@ -26,7 +26,10 @@ import (
 const extractionPrompt = `You are extracting structured data from a photo of a restaurant receipt.
 Return the restaurant name, the date (ISO 8601, best effort), and every line item with its name,
 unit price in integer cents (priceCents is the price for a single item, not the line total), and
-quantity. Also return, in integer cents: the pre-tax subtotal (subtotalCents), any tip/gratuity
+quantity. Preserve the receipt's line-item grouping exactly: do not collapse, combine, split, or
+otherwise alter line items. If a printed line says "4x", return that line with quantity 4; if four
+individual items are printed as separate lines, return four separate items rather than one item with
+quantity 4. Also return, in integer cents: the pre-tax subtotal (subtotalCents), any tip/gratuity
 amount (tipCents), and the final total actually charged including tax and tip (totalPaidCents) —
 prefer a credit-card/charged-amount line for totalPaidCents when one is printed. Only include
 amounts clearly printed on the receipt; if a field can't be determined, omit it rather than guessing
