@@ -41,6 +41,7 @@ services:
       LLM_API_KEY_FILE: /run/secrets/llm_api_key
       SMTP_PASS_FILE: /run/secrets/smtp_pass
       S3_CREDENTIALS_FILE: /run/secrets/s3_credentials
+      IMAGE_CONVERTER_URL: http://image-converter:8080
     secrets:
       - postgres_password
       - otp_hash_pepper
@@ -52,12 +53,39 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      image-converter:
+        condition: service_healthy
+    networks:
+      default: {}
+      conversion: {}
     volumes:
       - uploads:/data/uploads
     healthcheck:
       test: ["CMD", "wget", "-qO-", "http://localhost:8080/healthz"]
       interval: 5s
       timeout: 5s
+      retries: 10
+
+  image-converter:
+    build:
+      context: .
+      dockerfile: docker/image-converter.Dockerfile
+    networks:
+      conversion: {}
+    read_only: true
+    tmpfs:
+      - /tmp:size=1g,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    pids_limit: 128
+    mem_limit: 1536m
+    cpus: "1.0"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/healthz"]
+      interval: 5s
+      timeout: 3s
       retries: 10
 
   receipt-migrate:
@@ -98,6 +126,10 @@ services:
 volumes:
   pgdata:
   uploads:
+
+networks:
+  conversion:
+    internal: true
 
 secrets:
   postgres_password:

@@ -96,9 +96,28 @@ func TestServiceIdentifyAndConversionArgs(t *testing.T) {
 	if len(f.args) != 2 || f.args[1][0] != "convert" {
 		t.Fatalf("unexpected args %#v", f.args)
 	}
-	want := []string{"convert", "-limit", "thread", "2", "-limit", "time", "20", "-limit", "memory", "256MiB", "-limit", "map", "512MiB", "-limit", "disk", "1GiB", "-limit", "width", "8192", "-limit", "height", "8192", "-limit", "area", "40MP", "-limit", "list-length", "1", "-", "-auto-orient", "-resize", "4096x4096>", "-resize", "8847360@>", "-background", "white", "-alpha", "remove", "-colorspace", "sRGB", "-strip", "-quality", "95", "jpeg:-"}
+	want := []string{"convert", "-limit", "thread", "2", "-limit", "time", "20", "-limit", "memory", "512MiB", "-limit", "map", "1GiB", "-limit", "disk", "1GiB", "-limit", "width", "8192", "-limit", "height", "8192", "-limit", "area", "40MP", "-limit", "list-length", "2", "-", "-auto-orient", "-resize", "4096x4096>", "-resize", "8839168@>", "-background", "white", "-alpha", "remove", "-colorspace", "sRGB", "-strip", "-quality", "95", "jpeg:-"}
 	if strings.Join(f.args[1], " ") != strings.Join(want, " ") {
 		t.Fatalf("args %v", f.args[1])
+	}
+}
+
+func TestPreflightRunsAndValidatesConversion(t *testing.T) {
+	f := &fakeRunner{identify: "PNG|1|1|1|0\n", output: fakeJPEG(1, 1)}
+	s := New(f, 1)
+	if err := s.Preflight(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !s.Ready() || len(f.args) != 2 || f.args[0][0] != "identify" || f.args[1][0] != "convert" {
+		t.Fatalf("preflight did not exercise identify+convert: ready=%v args=%#v", s.Ready(), f.args)
+	}
+}
+
+func TestPreflightRejectsBrokenOutput(t *testing.T) {
+	f := &fakeRunner{identify: "PNG|1|1|1|0\n", output: []byte("not jpeg")}
+	s := New(f, 1)
+	if err := s.Preflight(context.Background()); err == nil || s.Ready() {
+		t.Fatal("broken preflight output marked converter ready")
 	}
 }
 

@@ -13,14 +13,32 @@ import (
 	"sync/atomic"
 )
 
+// preflightPNG is a 1x1 opaque PNG. Keeping it in the binary makes readiness
+// exercise the complete identify and conversion pipeline without a fixture or
+// writable application directory.
+var preflightPNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d,
+	0x49, 0x48, 0x44, 0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x04, 0x00, 0x00, 0x00, 0xb5, 0x1c, 0x0c, 0x02, 0x00, 0x00, 0x00,
+	0x0b, 0x49, 0x44, 0x41, 0x54, 0x78, 0xda, 0x63, 0x64, 0xf8, 0x0f, 0x00,
+	0x01, 0x05, 0x01, 0x01, 0x27, 0x18, 0xe3, 0x66, 0x00, 0x00, 0x00, 0x00,
+	0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
 const (
-	MaxSourceBytes        = 10 << 20
-	MaxOutputBytes        = 20 << 20
-	MaxInputSide          = 8192
-	MaxInputPixels  int64 = 40_000_000
-	MaxOutputSide         = 4096
+	MaxSourceBytes       = 10 << 20
+	MaxOutputBytes       = 20 << 20
+	MaxInputSide         = 8192
+	MaxInputPixels int64 = 40_000_000
+	MaxOutputSide        = 4096
+	// ImageMagick's area resize rounds each axis independently; allow one
+	// output row/column of rounding above the nominal 8.84736MP target.
 	MaxOutputPixels int64 = 4096 * 2160
-	MaxStderrBytes        = 64 << 10
+	// ImageMagick rounds each resized dimension independently. Leave two
+	// maximum-side rows/columns of headroom so the strict output cap remains
+	// true after rounding.
+	MaxOutputAreaForResize int64 = MaxOutputPixels - 2*MaxOutputSide
+	MaxStderrBytes               = 64 << 10
 )
 
 var (
@@ -158,17 +176,17 @@ func New(r Runner, maxConcurrent int) *Service {
 		panic("imageconverter: nil runner")
 	}
 	if maxConcurrent < 1 {
-		maxConcurrent = 4
+		maxConcurrent = 1
 	}
 	return &Service{Runner: r, sem: make(chan struct{}, maxConcurrent), MaxConcurrent: maxConcurrent}
 }
 
 func (s *Service) Preflight(ctx context.Context) error {
-	result, err := s.Runner.Run(ctx, []string{"-version"}, nil)
-	if err != nil || result.StdoutOverflow || result.StderrOverflow {
+	result, err := s.Convert(ctx, preflightPNG)
+	if err != nil || result.Width != 1 || result.Height != 1 {
 		s.ready.Store(false)
 		if err == nil {
-			err = errors.New("preflight output limit")
+			err = errors.New("preflight conversion validation failed")
 		}
 		return unavailable(err)
 	}
@@ -205,11 +223,11 @@ func (s *Service) Convert(ctx context.Context, source []byte) (Result, error) {
 	args := []string{
 		"convert",
 		"-limit", "thread", "2", "-limit", "time", "20",
-		"-limit", "memory", "256MiB", "-limit", "map", "512MiB",
+		"-limit", "memory", "512MiB", "-limit", "map", "1GiB",
 		"-limit", "disk", "1GiB", "-limit", "width", "8192",
 		"-limit", "height", "8192", "-limit", "area", "40MP",
-		"-limit", "list-length", "1", "-", "-auto-orient",
-		"-resize", "4096x4096>", "-resize", "8847360@>",
+		"-limit", "list-length", "2", "-", "-auto-orient",
+		"-resize", "4096x4096>", "-resize", strconv.FormatInt(MaxOutputAreaForResize, 10) + "@>",
 		"-background", "white", "-alpha", "remove",
 		"-colorspace", "sRGB", "-strip", "-quality", "95", "jpeg:-",
 	}
@@ -233,7 +251,7 @@ func (s *Service) Convert(ctx context.Context, source []byte) (Result, error) {
 type metadata struct{ width, height int }
 
 func (s *Service) identify(ctx context.Context, source []byte, expected Kind) (metadata, error) {
-	run, err := s.Runner.Run(ctx, []string{"identify", "-limit", "thread", "2", "-limit", "time", "20", "-limit", "memory", "256MiB", "-limit", "map", "512MiB", "-limit", "disk", "1GiB", "-limit", "width", "8192", "-limit", "height", "8192", "-limit", "area", "40MP", "-limit", "list-length", "1", "-ping", "-format", "%m|%w|%h|%n|%[scene]\\n", "-"}, source)
+	run, err := s.Runner.Run(ctx, []string{"identify", "-limit", "thread", "2", "-limit", "time", "20", "-limit", "memory", "512MiB", "-limit", "map", "1GiB", "-limit", "disk", "1GiB", "-limit", "width", "8192", "-limit", "height", "8192", "-limit", "area", "40MP", "-limit", "list-length", "2", "-ping", "-format", "%m|%w|%h|%n|%[scene]\\n", "-"}, source)
 	if run.StdoutOverflow || run.StderrOverflow || errors.Is(err, ErrOutputOverflow) {
 		if ctx.Err() != nil {
 			return metadata{}, unavailable(ctx.Err())

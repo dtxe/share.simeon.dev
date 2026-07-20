@@ -18,7 +18,7 @@ func main() {
 	if exe == "" {
 		exe = "magick"
 	}
-	service := imageconverter.New(imageconverter.ExecRunner{Exe: exe}, 4)
+	service := imageconverter.New(imageconverter.ExecRunner{Exe: exe}, 1)
 	preflightCtx, cancelPreflight := context.WithTimeout(context.Background(), 5*time.Second)
 	if err := service.Preflight(preflightCtx); err != nil {
 		cancelPreflight()

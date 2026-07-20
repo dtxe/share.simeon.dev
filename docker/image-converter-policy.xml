@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<policymap>
+  <!-- Keep these limits consistent with backend/internal/imageconverter. -->
+  <policy domain="resource" name="thread" value="2"/>
+  <policy domain="resource" name="time" value="20"/>
+  <policy domain="resource" name="width" value="8192"/>
+  <policy domain="resource" name="height" value="8192"/>
+  <policy domain="resource" name="area" value="40MP"/>
+  <!-- IM7 allocates a transient second image while decoding a blob; 2 still
+       rejects multi-frame inputs while allowing the single-frame pipeline. -->
+  <policy domain="resource" name="list-length" value="2"/>
+  <policy domain="resource" name="memory" value="512MiB"/>
+  <policy domain="resource" name="map" value="1GiB"/>
+  <policy domain="resource" name="disk" value="1GiB"/>
+  <policy domain="system" name="max-memory-request" value="512MiB"/>
+  <policy domain="system" name="memory-map" value="anonymous"/>
+  <policy domain="cache" name="memory-map" value="anonymous"/>
+  <policy domain="cache" name="synchronize" value="true"/>
+
+  <!-- No external execution, filters, or indirect/network input. -->
+  <policy domain="delegate" rights="none" pattern="*"/>
+  <policy domain="filter" rights="none" pattern="*"/>
+  <policy domain="path" rights="none" pattern="*"/>
+  <policy domain="path" rights="none" pattern="@*"/>
+  <policy domain="path" rights="none" pattern="*://*"/>
+  <policy domain="path" rights="none" pattern="//*"/>
+  <!-- Blob conversion deliberately uses stdin and stdout. -->
+  <policy domain="path" rights="read|write" pattern="-"/>
+  <!-- ImageMagick's pixel cache uses transient files here when memory spills. -->
+  <policy domain="path" rights="read|write" pattern="/tmp/*"/>
+
+  <!-- Loading is module-gated as well as coder-gated. Alpine exposes HEIF and
+       AVIF through the HEIC module, so no separate module is present. -->
+  <policy domain="module" rights="none" pattern="*"/>
+  <policy domain="module" rights="read|write" pattern="JPEG"/>
+  <policy domain="module" rights="read|write" pattern="PNG"/>
+  <policy domain="module" rights="read|write" pattern="WEBP"/>
+  <policy domain="module" rights="read|write" pattern="HEIC"/>
+
+  <!-- Last matching coder rule wins: deny every coder, then allow this exact set. -->
+  <policy domain="coder" rights="none" pattern="*"/>
+  <policy domain="coder" rights="read" pattern="JPEG"/>
+  <policy domain="coder" rights="read" pattern="PNG"/>
+  <policy domain="coder" rights="read" pattern="WEBP"/>
+  <policy domain="coder" rights="read" pattern="HEIC"/>
+  <policy domain="coder" rights="read" pattern="HEIF"/>
+  <policy domain="coder" rights="read" pattern="AVIF"/>
+  <policy domain="coder" rights="read|write" pattern="JPEG"/>
+</policymap>
