@@ -1,6 +1,10 @@
 package extraction
 
-import "share/backend/internal/llm"
+import (
+	"math"
+
+	"share/backend/internal/llm"
+)
 
 // SumItemsCents computes sum(item.PriceCents * item.Quantity), rounding to
 // the nearest cent per item. Shared by CheckSubtotal and by strategies that
@@ -13,7 +17,7 @@ func SumItemsCents(items []llm.ExtractedItem) int64 {
 		if qty <= 0 {
 			qty = 1
 		}
-		sum += int64(float64(it.PriceCents)*qty + 0.5)
+		sum += int64(math.Round(float64(it.PriceCents) * qty))
 	}
 	return sum
 }

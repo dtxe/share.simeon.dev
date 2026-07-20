@@ -370,8 +370,15 @@ func TestCalculateInterimAcceptsIntegralDecimalPrice(t *testing.T) {
 	}
 }
 
+func TestCalculateInterimIncludesRefunds(t *testing.T) {
+	got, err := calculateInterim(`{"item":[{"p":531,"n":4},{"p":509,"n":2},{"p":-531,"n":1}]}`)
+	if err != nil || got != `{"subtotalCents":2611}` {
+		t.Fatalf("calculateInterim = %q, err=%v", got, err)
+	}
+}
+
 func TestCalculateInterimRejectsInvalidArguments(t *testing.T) {
-	for _, raw := range []string{`{"item":[{"p":1}]}`, `{"item":[{"n":"one"}]}`, `{"item":[{"p":-1,"n":1}]}`, `{"item":[{"p":"1","n":1}]}`, `{"item":[{"p":1,"n":"one"}]}`, `{"item":[{"p":1,"n":1,"x":2}]}`, `{"item":[]} {"extra":true}`} {
+	for _, raw := range []string{`{"item":[{"p":1}]}`, `{"item":[{"n":"one"}]}`, `{"item":[{"p":"1","n":1}]}`, `{"item":[{"p":1,"n":"one"}]}`, `{"item":[{"p":1,"n":1,"x":2}]}`, `{"item":[]} {"extra":true}`} {
 		if _, err := calculateInterim(raw); err == nil {
 			t.Errorf("calculateInterim(%s) accepted invalid arguments", raw)
 		}
@@ -397,10 +404,10 @@ func TestExtractReceiptCalculatorTurn(t *testing.T) {
 		}
 		rawRequests = append(rawRequests, raw)
 		if len(requests) == 1 {
-			writeToolResponse(t, w, "calc_1", interimCalculationFunctionName, `{"item":[{"p":100,"n":2.5},{"p":333,"n":0}]}`, responseUsage{PromptTokens: 11, CompletionTokens: 7})
+			writeToolResponse(t, w, "calc_1", interimCalculationFunctionName, `{"item":[{"p":531,"n":4},{"p":509,"n":2},{"p":-531,"n":1}]}`, responseUsage{PromptTokens: 11, CompletionTokens: 7})
 			return
 		}
-		writeToolResponse(t, w, "extract_2", extractFunctionName, `{"restaurantName":"Cafe","subtotalCents":583,"items":[{"name":"Item","priceCents":100,"quantity":2.5}]}`, responseUsage{PromptTokens: 23, CompletionTokens: 13})
+		writeToolResponse(t, w, "extract_2", extractFunctionName, `{"restaurantName":"Cafe","subtotalCents":2611,"items":[{"name":"Pitcher","priceCents":531,"quantity":4},{"name":"Chips","priceCents":509,"quantity":2},{"name":"Pitcher refund","priceCents":-531,"quantity":1}]}`, responseUsage{PromptTokens: 23, CompletionTokens: 13})
 	}))
 	defer srv.Close()
 
@@ -424,10 +431,10 @@ func TestExtractReceiptCalculatorTurn(t *testing.T) {
 		t.Fatalf("final messages = %d, want user + assistant call + tool result", len(requests[1].Messages))
 	}
 	toolResult := requests[1].Messages[2]
-	if toolResult.Role != "tool" || toolResult.ToolCallID != "calc_1" || len(toolResult.Content) != 1 || toolResult.Content[0].Text != `{"subtotalCents":583}` {
+	if toolResult.Role != "tool" || toolResult.ToolCallID != "calc_1" || len(toolResult.Content) != 1 || toolResult.Content[0].Text != `{"subtotalCents":2611}` {
 		t.Fatalf("unexpected calculator result: %+v", toolResult)
 	}
-	if result.Receipt.RestaurantName != "Cafe" || result.Receipt.SubtotalCents != 583 {
+	if result.Receipt.RestaurantName != "Cafe" || result.Receipt.SubtotalCents != 2611 || result.Receipt.Items[2].PriceCents != -531 {
 		t.Fatalf("unexpected receipt: %+v", result.Receipt)
 	}
 	if result.Usage.PromptTokens != 34 || result.Usage.CompletionTokens != 20 {

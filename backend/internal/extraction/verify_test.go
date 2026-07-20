@@ -34,6 +34,17 @@ func TestCheckSubtotal(t *testing.T) {
 			wantDiff:      0,
 		},
 		{
+			name: "refund subtracts from subtotal",
+			items: []llm.ExtractedItem{
+				{Name: "pitcher", PriceCents: 531, Quantity: 4},
+				{Name: "chips", PriceCents: 509, Quantity: 2},
+				{Name: "pitcher refund", PriceCents: -531, Quantity: 1},
+			},
+			subtotalCents: 2611,
+			wantMatched:   true,
+			wantDiff:      0,
+		},
+		{
 			name: "off by rounding within tolerance",
 			items: []llm.ExtractedItem{
 				{Name: "a", PriceCents: 333, Quantity: 1},

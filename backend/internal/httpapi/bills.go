@@ -269,7 +269,7 @@ func (s *Server) handleReplaceDishes(w http.ResponseWriter, r *http.Request) {
 			writeJSONError(w, http.StatusBadRequest, "dish name must be 1-100 characters")
 			return
 		}
-		if d.UnitPriceCents < 0 || d.UnitPriceCents > 100_000_00 {
+		if d.UnitPriceCents < -100_000_00 || d.UnitPriceCents > 100_000_00 {
 			writeJSONError(w, http.StatusBadRequest, "unitPriceCents out of range")
 			return
 		}
@@ -309,7 +309,7 @@ func (s *Server) handleAddDish(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "dish name must be 1-100 characters")
 		return
 	}
-	if body.UnitPriceCents < 0 || body.UnitPriceCents > 100_000_00 {
+	if body.UnitPriceCents < -100_000_00 || body.UnitPriceCents > 100_000_00 {
 		writeJSONError(w, http.StatusBadRequest, "unitPriceCents out of range")
 		return
 	}
@@ -354,7 +354,7 @@ func (s *Server) handleUpdateDish(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
-	if body.UnitPriceCents != nil && (*body.UnitPriceCents < 0 || *body.UnitPriceCents > 100_000_00) {
+	if body.UnitPriceCents != nil && (*body.UnitPriceCents < -100_000_00 || *body.UnitPriceCents > 100_000_00) {
 		writeJSONError(w, http.StatusBadRequest, "unitPriceCents out of range")
 		return
 	}

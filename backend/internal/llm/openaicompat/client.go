@@ -37,7 +37,7 @@ correct whichever was misread — the most common error is recording the line to
 quantity) as priceCents instead of the per-item unit price.
 You may use the interim_calculation calculator to verify the subtotal before returning the extraction.
 When calling it, use exactly {"item":[{"p":1200,"n":2}]}: item is always an array, even for one item;
-p is the integer per-item price in cents, and n is an unquoted numeric quantity. It returns subtotalCents.
+p is the integer per-item price in cents (it may be negative for a printed refund), and n is an unquoted numeric quantity. It returns subtotalCents.
 Keep private reasoning terse: use short fragments, no filler or restatement, and state each fact once.
 Preserve exact receipt text and numbers. Do not omit an accuracy check to be shorter.
 Call the extract_receipt function with the result — do not respond in plain text.`
@@ -197,7 +197,7 @@ var extractionSchema = map[string]any{
 				"type": "object",
 				"properties": map[string]any{
 					"name":       map[string]any{"type": "string"},
-					"priceCents": map[string]any{"type": "integer", "description": "per-item unit price in cents, not the line total"},
+					"priceCents": map[string]any{"type": "integer", "description": "per-item unit price in cents, not the line total; may be negative for a printed refund"},
 					"quantity":   map[string]any{"type": "number"},
 				},
 				"required": []string{"name", "priceCents", "quantity"},
@@ -383,7 +383,7 @@ func extractionTools(schema map[string]any) []toolDef {
 				"items": map[string]any{
 					"type": "object",
 					"properties": map[string]any{
-						"p": map[string]any{"type": "integer", "description": "price in cents"},
+						"p": map[string]any{"type": "integer", "description": "price in cents; may be negative for a printed refund"},
 						"n": map[string]any{"type": "number", "description": "quantity"},
 					},
 					"required":             []string{"p", "n"},
@@ -530,7 +530,7 @@ func (i *interimCalculationItem) UnmarshalJSON(data []byte) error {
 	}
 	value, err := parseIntegralPrice(string(trimmed))
 	if err != nil {
-		return fmt.Errorf("p must be a non-negative integer")
+		return fmt.Errorf("p must be an integer")
 	}
 	i.Price = new(int64)
 	*i.Price = value
@@ -549,11 +549,11 @@ func parseIntegralPrice(raw string) (int64, error) {
 	if len(parts) == 2 && strings.Trim(parts[1], "0") != "" {
 		return 0, fmt.Errorf("price is not integral")
 	}
-	value, err := strconv.ParseUint(parts[0], 10, 63)
-	if err != nil || value > math.MaxInt64 {
+	value, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil {
 		return 0, fmt.Errorf("price overflows cents")
 	}
-	return int64(value), nil
+	return value, nil
 }
 
 func calculateInterim(raw string) (string, error) {
@@ -576,7 +576,7 @@ func calculateInterim(raw string) (string, error) {
 	}
 	var subtotal int64
 	for _, item := range items {
-		if item.Price == nil || item.Quantity == nil || *item.Price < 0 {
+		if item.Price == nil || item.Quantity == nil {
 			return "", fmt.Errorf("openaicompat: invalid interim_calculation item")
 		}
 		qty, err := item.Quantity.Float64()
@@ -587,11 +587,11 @@ func calculateInterim(raw string) (string, error) {
 			qty = 1
 		}
 		value := math.Round(float64(*item.Price) * qty)
-		if value < 0 || value >= float64(math.MaxInt64) {
+		if value <= float64(math.MinInt64) || value >= float64(math.MaxInt64) {
 			return "", fmt.Errorf("openaicompat: interim_calculation overflow")
 		}
 		lineTotal := int64(value)
-		if subtotal > math.MaxInt64-lineTotal {
+		if (lineTotal > 0 && subtotal > math.MaxInt64-lineTotal) || (lineTotal < 0 && subtotal < math.MinInt64-lineTotal) {
 			return "", fmt.Errorf("openaicompat: interim_calculation overflow")
 		}
 		subtotal += lineTotal
