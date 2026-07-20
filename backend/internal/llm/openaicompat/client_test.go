@@ -303,7 +303,7 @@ func TestExtractReceiptRejectsUnknownFields(t *testing.T) {
 }
 
 func TestCalculateInterimRoundsEachItemAndDefaultsQuantity(t *testing.T) {
-	got, err := calculateInterim(`{"item":[{"p":100,"n":2.5},{"p":333,"n":0}]}`)
+	got, err := calculateInterim(`{"item":[{"p":100,"n":"2.5"},{"p":333,"n":0}]}`)
 	if err != nil {
 		t.Fatalf("calculateInterim: %v", err)
 	}

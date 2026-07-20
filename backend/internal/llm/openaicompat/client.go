@@ -468,8 +468,8 @@ type interimCalculationInput struct {
 }
 
 type interimCalculationItem struct {
-	Price    *int64   `json:"p"`
-	Quantity *float64 `json:"n"`
+	Price    *int64       `json:"p"`
+	Quantity *json.Number `json:"n"`
 }
 
 func calculateInterim(raw string) (string, error) {
@@ -492,10 +492,13 @@ func calculateInterim(raw string) (string, error) {
 	}
 	var subtotal int64
 	for _, item := range items {
-		if item.Price == nil || item.Quantity == nil || *item.Price < 0 || math.IsNaN(*item.Quantity) || math.IsInf(*item.Quantity, 0) {
+		if item.Price == nil || item.Quantity == nil || *item.Price < 0 {
 			return "", fmt.Errorf("openaicompat: invalid interim_calculation item")
 		}
-		qty := *item.Quantity
+		qty, err := item.Quantity.Float64()
+		if err != nil || math.IsNaN(qty) || math.IsInf(qty, 0) {
+			return "", fmt.Errorf("openaicompat: invalid interim_calculation item")
+		}
 		if qty <= 0 {
 			qty = 1
 		}
