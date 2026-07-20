@@ -197,6 +197,9 @@ func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
 			if !strings.Contains(gotBody.Messages[0].Content[0].Text, "Keep private reasoning terse") {
 				t.Fatalf("expected prompt to request terse private reasoning, got: %q", gotBody.Messages[0].Content[0].Text)
 			}
+			if !strings.Contains(gotBody.Messages[0].Content[0].Text, `{"item":[{"p":1200,"n":2}]}`) {
+				t.Fatalf("expected prompt to include calculator call format, got: %q", gotBody.Messages[0].Content[0].Text)
+			}
 		})
 	}
 }

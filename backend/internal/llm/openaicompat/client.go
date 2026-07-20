@@ -35,6 +35,8 @@ quantity equals subtotalCents. If they don't match, re-read the item lines and t
 correct whichever was misread — the most common error is recording the line total (unit price times
 quantity) as priceCents instead of the per-item unit price.
 You may use the interim_calculation calculator to verify the subtotal before returning the extraction.
+When calling it, use exactly {"item":[{"p":1200,"n":2}]}: item is always an array, even for one item;
+p is the integer per-item price in cents, and n is an unquoted numeric quantity. It returns subtotalCents.
 Keep private reasoning terse: use short fragments, no filler or restatement, and state each fact once.
 Preserve exact receipt text and numbers. Do not omit an accuracy check to be shorter.
 Call the extract_receipt function with the result — do not respond in plain text.`
