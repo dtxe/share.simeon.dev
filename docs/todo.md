@@ -69,7 +69,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 ## 8. Receipt upload pipeline
 - [x] `internal/receipts` — size cap, magic-byte sniff, decompression-bomb guard, re-encode to JPEG q80 (strips EXIF/GPS)
 - [x] Unit tests cover receipt upper bounds: uploads over 10 MiB and decoded images over 40MP are rejected server-side
-- [x] Storage: random-hex filename under a per-session subdirectory, filename never client-derived
+- [x] Storage: selectable local/private-OVH-S3 backends, random-hex filename under a per-session subdirectory, filename never client-derived
 - [x] Manual check: uploaded a real JPEG end-to-end, fetched it back via both the owner route and the public share route, confirmed `file` reports valid JPEG both times
 
 ## 9. httpapi wiring
@@ -120,8 +120,14 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
   - **font/CSP follow-up fixed**: the redesign uses Google-hosted JetBrains Mono, so prod CSP now permits `https://fonts.googleapis.com` in `style-src` and `https://fonts.gstatic.com` in `font-src`; without both, prod would silently fall back even though dev worked.
   - **process note**: `docker compose build <service>` retags the shared `<project>-<service>:latest` image (`share-<service>` as of the Cher→Share rename) regardless of which target you build, so testing the prod target this way temporarily overwrites the tag the running dev container was built from. Restored both by rebuilding through `docker compose up -d --build` (which uses the dev override again) immediately after the prod-image tests.
 - [x] distroless/non-root backend prod image — built and run standalone against the compose network, confirmed `/healthz` → 200
-- [x] docker secrets wiring — `docker-compose.yml` now has a top-level `secrets:` block (`postgres_password`, `llm_api_key`, `smtp_pass`, files under gitignored `./secrets/`), mounted into both `postgres` (native `POSTGRES_PASSWORD_FILE`) and `backend`. Since compose can't assemble `DATABASE_URL` from a secret file itself, `internal/config` grew `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD[_FILE]`/`DB_NAME` fields and builds the DSN from parts when `DATABASE_URL` isn't set directly. Verified live: `docker compose up -d --build backend postgres redis`, backend connected via the secret-derived DSN, `/healthz` → `ok`, `/api/me` → real JSON. See `docs/agent_lessons.md` for the "don't set both `POSTGRES_PASSWORD` and `POSTGRES_PASSWORD_FILE`" gotcha.
-- [x] Daily cleanup job (`internal/cleanup`, hourly sweep) — expired sessions, otp_codes, webauthn_ceremonies, and stale bill_sessions (+ their orphaned receipt files via `receipts.Storage.Delete`); confirmed live in the running dev stack, it actually cleaned up 2 expired OTP codes and 1 stale WebAuthn ceremony left over from earlier manual testing
+- [x] docker secrets wiring — `docker-compose.yml` now has a top-level `secrets:` block (`postgres_password`, `llm_api_key`, `smtp_pass`, `s3_credentials`, files under gitignored `./secrets/`), mounted into both `postgres` (native `POSTGRES_PASSWORD_FILE`) and `backend` (including `/run/secrets/s3_credentials`). Since compose can't assemble `DATABASE_URL` from a secret file itself, `internal/config` grew `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD[_FILE]`/`DB_NAME` fields and builds the DSN from parts when `DATABASE_URL` isn't set directly. Verified live: `docker compose up -d --build backend postgres redis`, backend connected via the secret-derived DSN, `/healthz` → `ok`, `/api/me` → real JSON. See `docs/agent_lessons.md` for the "don't set both `POSTGRES_PASSWORD` and `POSTGRES_PASSWORD_FILE`" gotcha.
+- [x] Daily cleanup job (`internal/cleanup`, hourly sweep) — expired sessions, otp_codes, webauthn_ceremonies, and stale bill_sessions, with receipt paths durably queued and retried through `receipt_deletion_queue`; confirmed live in the running dev stack, it actually cleaned up 2 expired OTP codes and 1 stale WebAuthn ceremony left over from earlier manual testing
+
+## 14. Receipt S3 migration and cutover operations
+- [x] S3 storage backend with private virtual-hosted OVH configuration, short internal presigning, fixed-host Caddy proxy, and sensitive-header/referrer stripping — implemented in `b4bfd20` and `3469d3a`
+- [x] One-shot referenced-only migration with dry-run, conflict/no-overwrite behavior, orphan reporting, canary/privacy/versioning preflight, and full verification — implemented in `6f3d9dd`
+- [x] Race-safe receipt replacement and durable deletion outbox with retry/backoff — implemented in `a31f399`
+- [ ] Execute the production maintenance-window migration and cutover, including backup, OVH bucket policy/versioning review, smoke tests, and an explicitly recorded local-volume review window — see `docs/receipt-migration-runbook.md`
 
 ## Final verification pass
 - [x] `docker compose up` full flow, zero login: create bill → receipt → extract → assign → breakdown → share link → incognito view — done live via curl (backend) and a real browser (frontend, agent-browser at 390×844); extract confirmed to fail gracefully (no `FIREWORKS_API_KEY` configured) rather than crash
@@ -129,4 +135,4 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 - [x] `ANON_ACCOUNTS_ENABLED=false` → every route 401s without session — verified, then reverted
 - [x] Bill workspace manually tested on narrow mobile viewport emulation — verified live in-browser at 390×844 (agent-browser), including both assignment modes
 
-Only remaining item anywhere in this file: full WebAuthn browser round-trip with a real authenticator. Live Fireworks extraction against a real photo is now verified against the live stack.
+Remaining operational items: execute the production receipt migration/cutover described in step 14, and complete the full WebAuthn browser round-trip with a real authenticator. Live Fireworks extraction against a real photo is verified against the live stack.

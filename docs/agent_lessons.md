@@ -45,15 +45,23 @@ Unconventional, easy-to-miss things future work on this repo should know. Ordina
 - Signed commits via `gpg.format=ssh` depend on `ssh-add -l` actually reaching a live agent. A broken `~/.ssh/ssh_auth_sock` symlink (e.g. pointing at itself, or at a socket from a dead session) fails `git commit` with the unhelpful "Couldn't get agent socket?" — check `ssh-add -l` directly before assuming the commit itself is broken. Also: the auto-mode permission layer treats touching `~/.ssh` or adopting a foreign ssh-agent socket as out-of-scope and will block it without explicit user sign-off — don't try to route around that block, just ask/wait.
 - OTP testing now requires a configured real SMTP relay or provider-side test inbox. The compose stack intentionally does not include a local SMTP catcher.
 
-## Remaining TODO (not yet done)
+## Remaining verification/work items
 
 - **Full WebAuthn round trip** — ceremony endpoints are live and return real challenges, but completing a registration/login needs a real browser + platform authenticator, which hasn't been exercised (curl can't fake WebAuthn attestation).
+- **Production receipt migration/cutover** — the migration binary and runbook exist, but the maintenance-window execution, OVH bucket policy review, and production smoke tests are operational work, not a claim that cutover has already happened.
 
-Done since first written: daily cleanup job (`internal/cleanup`, wired into `main.go`, confirmed live removing expired OTP codes/WebAuthn ceremonies), the Caddy prod-ingress build (both prod Docker images built and smoke-tested standalone — see `docs/todo.md` step 13 for details, including the Caddy directive-order bug above), and live Fireworks extraction smoke-tested against a real receipt photo.
+Done since first written: daily cleanup job (`internal/cleanup`, wired into `main.go`, confirmed live removing expired OTP codes/WebAuthn ceremonies and now processing the durable receipt deletion queue), the Caddy prod-ingress build (both prod Docker images built and smoke-tested standalone — see `docs/todo.md` step 13 for details, including the Caddy directive-order bug above), and live Fireworks extraction smoke-tested against a real receipt photo.
+
+## Receipt storage migration lessons
+
+- Receipt storage is no longer local-disk-only: production defaults to a private OVH S3 bucket, while `RECEIPT_STORAGE=local` remains an explicit selectable mode. Keep the local uploads volume available during the migration review window because new S3 objects cannot be recovered by simply switching back to local mode.
+- `receipt-migrate migrate --dry-run` intentionally skips the mutating canary preflight; run `preflight` separately. A normal `migrate` runs preflight and full verification, while `verify` compares every DB-referenced local/S3 object by SHA-256. Conflicts and unverifiable existing objects stop the command rather than overwriting them.
+- The Caddy receipt route must preserve its `route` ordering: forward-auth first, then backend-provided rewrite, then the fixed OVH proxy. Strip cookies, authorization, forwarding, origin, and referrer headers before the S3 hop; test response bodies and unsigned direct bucket access, not only status codes.
+- Receipt deletion is an outbox, not a best-effort side effect. Expiry, replacement, compression races, and upload compensation enqueue paths; cleanup claims rows, retries failures with backoff, and acknowledges only successful object deletion.
 
 ## Docker secrets
 
-- `docker-compose.yml` now has a top-level `secrets:` block backed by files in `./secrets/` (gitignored): `postgres_password`, `llm_api_key`, `smtp_pass`.
+- `docker-compose.yml` now has a top-level `secrets:` block backed by files in `./secrets/` (gitignored): `postgres_password`, `llm_api_key`, `smtp_pass`, and `s3_credentials` (`./secrets/s3_credentials.json`, mounted at `/run/secrets/s3_credentials`).
 - **`DATABASE_URL` can't be assembled by compose itself** — compose has no built-in way to interpolate a secret file's contents into another env var's value at the YAML level. Instead, `internal/config` grew discrete `DB_HOST`/`DB_PORT`/`DB_USER`/`DB_PASSWORD`/`DB_NAME` fields; if `DATABASE_URL` isn't set directly, `Load()` builds it from those parts, and `DB_PASSWORD` resolves via the existing `_FILE` convention (`DB_PASSWORD_FILE=/run/secrets/postgres_password`). Both the `postgres` container and the `backend` container mount the *same* secret file, so there's one password with two independent read paths (postgres's native `POSTGRES_PASSWORD_FILE` support, and our own `getEnv`).
 - **Don't set both `POSTGRES_PASSWORD` and `POSTGRES_PASSWORD_FILE`** on the postgres official image — it refuses to start if both are present. Once a secret file is wired, drop the plain env var entirely (removed from both `.env` and `.env.example`), don't just leave it unused as a fallback.
 - Empty optional secret files (e.g. `llm_api_key.txt` when extraction is not configured) resolve to `""` via `_FILE`, same as an unset plain env var would. OTP SMTP credentials and `otp_hash_pepper.txt` are not optional when `EMAIL_OTP_ENABLED=true`.
