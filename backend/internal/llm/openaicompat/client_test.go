@@ -194,6 +194,9 @@ func TestExtractReceiptReasoningConfigIsModelAware(t *testing.T) {
 			if !strings.Contains(normalizedPrompt, "verify that the sum of each item's priceCents times its quantity equals subtotalCents") {
 				t.Fatalf("expected prompt to instruct the model to reconcile items against subtotalCents, got: %q", gotBody.Messages[0].Content[0].Text)
 			}
+			if !strings.Contains(gotBody.Messages[0].Content[0].Text, "Keep private reasoning terse") {
+				t.Fatalf("expected prompt to request terse private reasoning, got: %q", gotBody.Messages[0].Content[0].Text)
+			}
 		})
 	}
 }
