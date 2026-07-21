@@ -6,6 +6,8 @@ import { useMe, useInvalidateMe } from '../auth/useMe'
 import { useAuthActions } from '../auth/useAuthActions'
 import { api } from '../lib/api'
 import { Button } from './ui/Button'
+import { useThemePreference, type ThemePreference } from '../lib/theme'
+import { SegmentedControl } from './ui/SegmentedControl'
 
 export function ProfileDrawer({
   open,
@@ -19,6 +21,7 @@ export function ProfileDrawer({
   const qc = useQueryClient()
   const [, navigate] = useLocation()
   const auth = useAuthActions()
+  const theme = useThemePreference()
 
   // vaul's Drawer.Root doesn't remount on close/reopen — only the portal's
   // visibility toggles — so stage/email/code state must be reset explicitly
@@ -46,6 +49,20 @@ export function ProfileDrawer({
           <div className="mb-4 flex flex-col gap-1 text-sm">
             <span>Email — {me?.email ?? 'not linked'}</span>
             {me?.passkeysEnabled && <span>Passkey — {me.hasPasskey ? 'added' : 'none'}</span>}
+          </div>
+
+          <div className="mb-5">
+            <h3 className="mb-2 text-sm font-medium">Appearance</h3>
+            <SegmentedControl<ThemePreference>
+              aria-label="Appearance"
+              value={theme.preference}
+              onChange={theme.setPreference}
+              options={[
+                { value: 'system', label: 'System' },
+                { value: 'light', label: 'Light' },
+                { value: 'dark', label: 'Dark' },
+              ]}
+            />
           </div>
 
           {auth.stage === 'idle' && (

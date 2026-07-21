@@ -80,4 +80,6 @@ The latest UI redesign supersedes the original multi-step mobile wizard (`/peopl
 ## Frontend visual language
 The shipped redesign uses a restrained receipt-led system rather than generic app chrome: warm paper background (`#faf9f7`), white paper cards, dashed dividers, green accent, and JetBrains Mono as the global typeface. `.font-receipt` is still applied explicitly to money, counts, URLs, and receipt-like summaries so numeric UI gets tabular figures even if the global font changes later.
 
+Theme colors use semantic Tailwind v4 tokens (`background`, `surface`, `foreground`, `border`, `primary`, status colors, overlays, and skeleton colors), rather than hard-coded utility colors in components. The Profile drawer persists an Appearance choice under `share-theme`: System removes the root override and follows `prefers-color-scheme`, while Light and Dark set `html[data-theme]` before the first paint.
+
 The production Caddy CSP must allow the Google Fonts stylesheet and font files (`style-src ... https://fonts.googleapis.com`; `font-src ... https://fonts.gstatic.com`) or this visual decision silently degrades in prod.
