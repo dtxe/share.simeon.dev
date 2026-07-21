@@ -53,11 +53,11 @@ export default function SharedView() {
       </div>
 
       <div className="flex flex-col gap-2">
-        {data.result.people.map((p, i) => {
+        {data.result.people.map((p) => {
           const person = data.people.find((person) => person.id === p.personId)
           if (!person) return null
           return canExpand ? (
-            <PersonBreakdownCard key={p.personId} person={person} owedCents={p.owedCents} dishes={dishes} portions={portions} defaultOpen={i === 0} />
+            <PersonBreakdownCard key={p.personId} person={person} owedCents={p.owedCents} dishes={dishes} portions={portions} />
           ) : (
             <div key={p.personId} className="flex items-center justify-between rounded-xl border border-border bg-surface p-4">
               <span className="font-medium">{person.name}</span>
