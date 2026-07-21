@@ -2,6 +2,7 @@
 @import "tailwindcss";
 
 :root {
+  color-scheme: light;
   --theme-background: #faf9f7;
   --theme-surface: #ffffff;
   --theme-surface-hover: #f5f3ef;
