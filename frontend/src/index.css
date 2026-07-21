@@ -23,16 +23,6 @@
   --theme-skeleton-highlight: #eeece8;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, "Cascadia Mono", "Courier New", monospace;
 
-  /* Temporary aliases for components migrated in a later unit. */
-  --color-bg: var(--theme-background);
-  --color-paper: var(--theme-surface);
-  --color-ink: var(--theme-foreground);
-  --color-ink-soft: var(--theme-foreground-muted);
-  --color-border: var(--theme-border);
-  --color-accent: var(--theme-primary);
-  --color-accent-tint: var(--theme-primary-soft);
-  --color-warn: var(--theme-warning);
-
   /* fixed, round-robin people palette — used for avatars/dots only, never
      for semantic meaning (identity is always also shown via initials) */
   --color-person-0: #ef6f5c;

@@ -9,7 +9,7 @@ export function ReceiptImage({ src, size = 64 }: { src: string; size?: number })
       </button>
       {expanded && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-overlay-strong p-4"
           onClick={() => setExpanded(false)}
         >
           <img src={src} alt="Receipt" className="max-h-full max-w-full rounded-lg object-contain" />

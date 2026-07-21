@@ -19,7 +19,7 @@ export function Section({
   children: ReactNode
 }) {
   return (
-    <section className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-paper)]">
+    <section className="overflow-hidden rounded-xl border border-border bg-surface">
       <button
         type="button"
         onClick={onToggle}
@@ -28,16 +28,16 @@ export function Section({
       >
         <span className="flex items-center gap-2 font-medium">
           {title}
-          {complete && !open && <Check size={16} className="text-[var(--color-accent)]" />}
+          {complete && !open && <Check size={16} className="text-primary" />}
         </span>
-        <span className="flex items-center gap-2 text-sm text-[var(--color-ink-soft)]">
+        <span className="flex items-center gap-2 text-sm text-foreground-muted">
           {!open && warn}
           {!open && summary && <span className="font-receipt">{summary}</span>}
           <ChevronDown size={18} className={`transition-transform ${open ? 'rotate-180' : ''}`} />
         </span>
       </button>
       {open && (
-        <div className="border-t border-dashed border-[var(--color-border)] px-4 py-4">{children}</div>
+        <div className="border-t border-dashed border-border px-4 py-4">{children}</div>
       )}
     </section>
   )

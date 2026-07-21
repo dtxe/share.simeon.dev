@@ -16,7 +16,7 @@ export function Stepper({
         aria-label="Decrease"
         disabled={value <= min}
         onClick={() => onChange(value - 1)}
-        className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--color-border)] bg-white disabled:opacity-30"
+        className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface disabled:opacity-30"
       >
         <Minus size={16} />
       </button>
@@ -25,7 +25,7 @@ export function Stepper({
         type="button"
         aria-label="Increase"
         onClick={() => onChange(value + 1)}
-        className="flex h-11 w-11 items-center justify-center rounded-full border border-[var(--color-border)] bg-white"
+        className="flex h-11 w-11 items-center justify-center rounded-full border border-border bg-surface"
       >
         <Plus size={16} />
       </button>

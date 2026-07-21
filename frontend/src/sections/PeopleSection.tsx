@@ -56,7 +56,7 @@ export function PeopleSection({
   return (
     <div className="flex flex-col gap-3">
       {people.length > 0 && (
-        <ul className="flex flex-col divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-white">
+        <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface">
           {people.map((p) => (
             <li key={p.id} className="flex items-center gap-3 p-3">
               <Avatar name={p.name} sortOrder={p.sortOrder} size={36} />
@@ -71,11 +71,11 @@ export function PeopleSection({
               />
               {confirmDelete === p.id ? (
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="text-[var(--color-warn)]">Remove?</span>
-                  <button type="button" className="font-medium text-red-600" onClick={() => void onDelete(p.id).then(() => setConfirmDelete(null))}>
+                  <span className="text-danger">Remove?</span>
+                  <button type="button" className="font-medium text-danger" onClick={() => void onDelete(p.id).then(() => setConfirmDelete(null))}>
                     Yes
                   </button>
-                  <button type="button" className="text-neutral-400" onClick={() => setConfirmDelete(null)}>
+                  <button type="button" className="text-foreground-subtle" onClick={() => setConfirmDelete(null)}>
                     No
                   </button>
                 </div>
@@ -83,7 +83,7 @@ export function PeopleSection({
                 <button
                   type="button"
                   aria-label={`Remove ${p.name}`}
-                  className="text-neutral-400"
+                  className="text-foreground-subtle"
                   onClick={() => {
                     if (personHasPortions(p.id)) setConfirmDelete(p.id)
                     else void onDelete(p.id)
@@ -104,9 +104,9 @@ export function PeopleSection({
             onChange={(e) => setBulkText(e.target.value)}
             placeholder="One name per line"
             rows={4}
-            className="rounded-lg border border-[var(--color-border)] bg-white px-3 py-2"
+            className="rounded-lg border border-border bg-surface px-3 py-2"
           />
-          {bulkError && <p className="text-sm text-[var(--color-warn)]">{bulkError}</p>}
+          {bulkError && <p className="text-sm text-danger">{bulkError}</p>}
           <div className="flex gap-2">
             <Button size="sm" disabled={pending} onClick={() => void submitBulk()}>
               {pending ? 'Adding…' : 'Add everyone'}
@@ -119,7 +119,7 @@ export function PeopleSection({
           </div>
         </div>
       ) : (
-        <button type="button" onClick={() => setBulkOpen(true)} className="self-start text-sm font-medium text-[var(--color-accent)]">
+        <button type="button" onClick={() => setBulkOpen(true)} className="self-start text-sm font-medium text-primary">
           + Add people
         </button>
       )}

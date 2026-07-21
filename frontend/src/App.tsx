@@ -19,7 +19,7 @@ export default function App() {
       <Route path="/bill/:id/results">{(p) => <Redirect to={`/bill/${p.id}/settle`} />}</Route>
 
       <Route>
-        <div className="p-6 text-center text-sm text-neutral-500">Page not found.</div>
+        <div className="p-6 text-center text-sm text-foreground-muted">Page not found.</div>
       </Route>
     </Switch>
   )

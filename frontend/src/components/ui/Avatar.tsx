@@ -1,4 +1,4 @@
-import { personColor, initials } from '../../lib/colors'
+import { personColor, personForeground, initials } from '../../lib/colors'
 
 export function Avatar({
   name,
@@ -12,15 +12,16 @@ export function Avatar({
   filled?: boolean
 }) {
   const color = personColor(sortOrder)
+  const foreground = personForeground(sortOrder)
   return (
     <span
-      className="flex shrink-0 items-center justify-center rounded-full font-semibold text-white"
+      className="flex shrink-0 items-center justify-center rounded-full font-semibold"
       style={{
         width: size,
         height: size,
         fontSize: size * 0.38,
         background: filled ? color : 'transparent',
-        color: filled ? '#fff' : color,
+        color: filled ? foreground : color,
         border: filled ? 'none' : `2px solid ${color}`,
       }}
     >

@@ -32,7 +32,7 @@ export function TotalPaidSection({
 
   return (
     <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] bg-white px-4 py-3">
+      <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3">
         <span className="text-lg">$</span>
         <input
           inputMode="decimal"
@@ -47,7 +47,7 @@ export function TotalPaidSection({
         />
       </div>
       {parsed != null && (
-        <p className="font-receipt text-sm text-[var(--color-ink-soft)]">
+        <p className="font-receipt text-sm text-foreground-muted">
           {delta >= 0 ? '+' : ''}
           {formatCents(delta)} ({pct.toFixed(1)}%) vs subtotal {formatCents(subtotalCents)}
           {fromReceipt && !userEdited.current && ' · from your receipt — tap to adjust'}

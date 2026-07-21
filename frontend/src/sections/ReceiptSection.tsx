@@ -81,7 +81,7 @@ export function ReceiptSection({
       <input ref={fileInputRef} type="file" accept="image/*" className="hidden" onChange={handleFile} />
 
       {(loading || stage === 'parsing') && !hasReceipt ? (
-        <div className="loading-box h-12 rounded-lg border border-[var(--color-border)]" aria-label="Loading receipt" />
+        <div className="loading-box h-12 rounded-lg border border-border" aria-label="Loading receipt" />
       ) : !hasReceipt && (
         <button
           type="button"
@@ -93,7 +93,7 @@ export function ReceiptSection({
           onDragLeave={() => setIsDragOver(false)}
           onDrop={handleDrop}
           disabled={busy}
-          className={`flex items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-4 text-center text-sm font-medium text-[var(--color-accent)] disabled:opacity-60 ${isDragOver ? 'border-[var(--color-accent)] bg-neutral-50' : 'border-[var(--color-border)] bg-white'}`}
+          className={`flex items-center justify-center gap-2 rounded-lg border border-dashed px-4 py-4 text-center text-sm font-medium text-primary disabled:opacity-60 ${isDragOver ? 'border-primary bg-surface-hover' : 'border-border bg-surface'}`}
         >
           {busy && <Loader2 size={16} className="animate-spin" />}
           {stage === 'parsing' ? 'Reading your receipt…' : busy ? 'Uploading…' : 'Scan receipt — photo or upload'}
@@ -101,11 +101,11 @@ export function ReceiptSection({
       )}
 
       {hasReceipt && (
-        <div className="flex items-center gap-3 rounded-lg border border-[var(--color-border)] bg-white p-3">
+        <div className="flex items-center gap-3 rounded-lg border border-border bg-surface p-3">
           {receiptUrl && <ReceiptImage src={receiptUrl} size={64} />}
           <div className="flex flex-1 flex-col gap-1">
             {stage === 'parsing' || pendingUpload || stage === 'uploading' ? (
-              <span className="flex items-center gap-1.5 text-sm text-neutral-500">
+              <span className="flex items-center gap-1.5 text-sm text-foreground-muted">
                 <Loader2 size={14} className="animate-spin" />
                 {stage === 'parsing' ? 'Reading your receipt…' : 'Uploading…'}
               </span>
@@ -131,7 +131,7 @@ export function ReceiptSection({
               <button
                 type="button"
                 onClick={handleReuploadClick}
-                className="flex items-center gap-1.5 self-start text-sm font-medium text-[var(--color-accent)]"
+                className="flex items-center gap-1.5 self-start text-sm font-medium text-primary"
               >
                 <Upload size={16} />
                 Re-upload photo
@@ -141,9 +141,9 @@ export function ReceiptSection({
         </div>
       )}
 
-      {error && <p className="text-sm text-[var(--color-warn)]">{error}</p>}
+      {error && <p className="text-sm text-danger">{error}</p>}
 
-      <div className="flex flex-col divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-white">
+      <div className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface">
         {stage === 'parsing' && dishes.length === 0 ? (
           <>
             <ShimmerRow />
@@ -160,8 +160,8 @@ export function ReceiptSection({
         )}
       </div>
 
-      <div className="flex items-center justify-between border-t border-dashed border-[var(--color-border)] pt-2 text-sm">
-        <span className="text-[var(--color-ink-soft)]">Subtotal</span>
+      <div className="flex items-center justify-between border-t border-dashed border-border pt-2 text-sm">
+        <span className="text-foreground-muted">Subtotal</span>
         <span className="font-receipt">{formatCents(subtotalCents)}</span>
       </div>
     </div>
@@ -171,8 +171,8 @@ export function ReceiptSection({
 function ShimmerRow() {
   return (
     <div className="flex items-center gap-2 p-3">
-      <div className="h-4 flex-1 animate-pulse rounded bg-[var(--color-border)]" />
-      <div className="h-4 w-20 animate-pulse rounded bg-[var(--color-border)]" />
+      <div className="h-4 flex-1 animate-pulse rounded bg-skeleton-highlight" />
+      <div className="h-4 w-20 animate-pulse rounded bg-skeleton-highlight" />
     </div>
   )
 }
@@ -213,9 +213,9 @@ function DishEditorRow({
         onBlur={commit}
         inputMode="decimal"
         placeholder="0.00"
-        className="w-20 rounded border border-[var(--color-border)] px-2 py-1 text-right font-receipt"
+        className="w-20 rounded border border-border bg-surface px-2 py-1 text-right font-receipt"
       />
-      <button type="button" onClick={() => void onDelete()} aria-label="Remove item" className="text-neutral-400">
+      <button type="button" onClick={() => void onDelete()} aria-label="Remove item" className="text-foreground-subtle">
         <Trash2 size={16} />
       </button>
     </div>
@@ -251,7 +251,7 @@ function AddDishRow({ onAdd }: { onAdd: (dish: { name: string; unitPriceCents: n
         value={name}
         onChange={(e) => setName(e.target.value)}
         placeholder="+ Add item"
-        className="min-w-0 flex-1 border-none bg-transparent text-[var(--color-accent)] focus:outline-none"
+        className="min-w-0 flex-1 border-none bg-transparent text-primary focus:outline-none"
       />
       <input
         value={priceDollars}
@@ -259,7 +259,7 @@ function AddDishRow({ onAdd }: { onAdd: (dish: { name: string; unitPriceCents: n
         onBlur={() => void commit()}
         inputMode="decimal"
         placeholder="0.00"
-        className="w-20 rounded border border-[var(--color-border)] px-2 py-1 text-right font-receipt"
+        className="w-20 rounded border border-border bg-surface px-2 py-1 text-right font-receipt"
       />
       <span className="w-4" />
     </div>

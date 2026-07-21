@@ -42,8 +42,8 @@ export function ProfileDrawer({
   return (
     <Drawer.Root open={open} onOpenChange={onOpenChange}>
       <Drawer.Portal>
-        <Drawer.Overlay className="fixed inset-0 bg-black/30" />
-        <Drawer.Content className="fixed inset-x-0 bottom-0 rounded-t-2xl bg-white p-6 pb-8">
+        <Drawer.Overlay className="fixed inset-0 bg-overlay" />
+        <Drawer.Content className="fixed inset-x-0 bottom-0 rounded-t-2xl bg-surface p-6 pb-8">
           <Drawer.Title className="mb-4 text-base font-semibold">Your account</Drawer.Title>
 
           <div className="mb-4 flex flex-col gap-1 text-sm">
@@ -94,7 +94,7 @@ export function ProfileDrawer({
                 placeholder="you@example.com"
                 value={auth.email}
                 onChange={(e) => auth.setEmail(e.target.value)}
-                className="flex-1 rounded-md border border-[var(--color-border)] px-3 py-2"
+                className="flex-1 rounded-md border border-border bg-surface px-3 py-2"
               />
               <Button onClick={() => void auth.requestCode()}>Send code</Button>
             </div>
@@ -108,18 +108,18 @@ export function ProfileDrawer({
                 placeholder="6-digit code"
                 value={auth.code}
                 onChange={(e) => auth.setCode(e.target.value)}
-                className="flex-1 rounded-md border border-[var(--color-border)] px-3 py-2"
+                className="flex-1 rounded-md border border-border bg-surface px-3 py-2"
               />
               <Button onClick={() => void auth.verifyCode()}>Verify</Button>
             </div>
           )}
 
           {auth.busy && auth.passkeysSupported && (
-            <p className="mt-3 text-sm text-neutral-500">
+            <p className="mt-3 text-sm text-foreground-muted">
               Working on {auth.busy === 'register' ? 'creating' : 'using'} your passkey…
             </p>
           )}
-          {auth.error && <p className="mt-3 text-sm text-[var(--color-warn)]">{auth.error}</p>}
+          {auth.error && <p className="mt-3 text-sm text-danger">{auth.error}</p>}
         </Drawer.Content>
       </Drawer.Portal>
     </Drawer.Root>

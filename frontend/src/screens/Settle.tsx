@@ -60,24 +60,24 @@ export default function SettleScreen() {
     <div className="mx-auto flex min-h-full max-w-md flex-col gap-4 px-4 pb-28">
       <AppHeader />
 
-      <button type="button" onClick={() => navigate(`/bill/${id}`)} className="self-start text-sm text-[var(--color-ink-soft)]">
+      <button type="button" onClick={() => navigate(`/bill/${id}`)} className="self-start text-sm text-foreground-muted">
         ← Edit split
       </button>
 
       {session && <TitleField title={session.title} suggestion={suggestion} onSave={(t) => updateTitle.mutate(t)} />}
 
-      <div className="flex flex-col gap-1 rounded-xl border border-[var(--color-border)] bg-[var(--color-paper)] p-4 font-receipt text-sm">
+      <div className="flex flex-col gap-1 rounded-xl border border-border bg-surface p-4 font-receipt text-sm">
         <div className="flex justify-between">
-          <span className="text-[var(--color-ink-soft)]">Subtotal</span>
+          <span className="text-foreground-muted">Subtotal</span>
           <span>{formatCents(subtotalCents)}</span>
         </div>
         {taxTip != null && (
-          <div className="flex justify-between border-t border-dashed border-[var(--color-border)] pt-1">
-            <span className="text-[var(--color-ink-soft)]">{taxTip >= 0 ? 'Taxes & tip' : 'Discount'}</span>
+          <div className="flex justify-between border-t border-dashed border-border pt-1">
+            <span className="text-foreground-muted">{taxTip >= 0 ? 'Taxes & tip' : 'Discount'}</span>
             <span>{formatCents(taxTip)}</span>
           </div>
         )}
-        <div className="flex justify-between border-t border-dashed border-[var(--color-border)] pt-1 text-base font-semibold">
+        <div className="flex justify-between border-t border-dashed border-border pt-1 text-base font-semibold">
           <span>Total paid</span>
           <span>{totalPaidCents != null ? formatCents(totalPaidCents) : '—'}</span>
         </div>
@@ -87,7 +87,7 @@ export default function SettleScreen() {
         <button
           type="button"
           onClick={() => navigate(`/bill/${id}`)}
-          className="rounded-lg border border-[var(--color-warn)] bg-white px-4 py-2 text-left text-sm text-[var(--color-warn)]"
+          className="rounded-lg border border-warning bg-warning-soft px-4 py-2 text-left text-sm text-warning"
         >
           {result.unassignedDishIds.length} dish(es) still unassigned — tap to fix
         </button>
@@ -106,7 +106,7 @@ export default function SettleScreen() {
         </div>
       )}
 
-      <div className="fixed inset-x-0 bottom-0 mx-auto flex max-w-md items-center justify-between gap-2 border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
+      <div className="fixed inset-x-0 bottom-0 mx-auto flex max-w-md items-center justify-between gap-2 border-t border-border bg-background p-4">
         <Button variant="secondary" onClick={() => navigate(`/bill/${id}`)}>
           Edit split
         </Button>
@@ -160,7 +160,7 @@ function TitleField({
             setValue(suggestion)
             onSave(suggestion)
           }}
-          className="mt-1 text-xs text-[var(--color-accent)]"
+          className="mt-1 text-xs text-primary"
         >
           Use "{suggestion}"
         </button>

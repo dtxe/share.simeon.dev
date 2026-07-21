@@ -23,29 +23,29 @@ export function ShareLinkDrawer({
   return (
     <Drawer.Root open={open} onOpenChange={onOpenChange}>
       <Drawer.Portal>
-        <Drawer.Overlay className="fixed inset-0 bg-black/30" />
-        <Drawer.Content className="fixed inset-x-0 bottom-0 rounded-t-2xl bg-[var(--color-paper)] p-6 pb-8">
+        <Drawer.Overlay className="fixed inset-0 bg-overlay" />
+        <Drawer.Content className="fixed inset-x-0 bottom-0 rounded-t-2xl bg-surface p-6 pb-8">
           <Drawer.Title className="mb-4 text-base font-semibold">Share this split</Drawer.Title>
           {shareUrl ? (
             <>
-              <div className="flex items-center gap-2 rounded-lg border border-[var(--color-border)] px-4 py-3">
+              <div className="flex items-center gap-2 rounded-lg border border-border bg-surface px-4 py-3">
                 <span className="min-w-0 flex-1 truncate font-receipt text-sm">{shareUrl}</span>
                 <button type="button" onClick={copy} aria-label="Copy link">
-                  {copied ? <Check size={18} className="text-[var(--color-accent)]" /> : <Copy size={18} />}
+                  {copied ? <Check size={18} className="text-primary" /> : <Copy size={18} />}
                 </button>
               </div>
               {typeof navigator.share === 'function' && (
                 <button
                   type="button"
                   onClick={() => navigator.share({ url: shareUrl })}
-                  className="mt-4 w-full rounded-lg bg-[var(--color-accent)] py-3 font-medium text-white"
+                  className="mt-4 w-full rounded-lg bg-primary py-3 font-medium text-primary-foreground"
                 >
                   Share…
                 </button>
               )}
             </>
           ) : (
-            <p className="text-sm text-neutral-500">Generating link…</p>
+            <p className="text-sm text-foreground-muted">Generating link…</p>
           )}
         </Drawer.Content>
       </Drawer.Portal>

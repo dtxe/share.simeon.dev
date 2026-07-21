@@ -7,10 +7,10 @@ const button = cva(
   {
     variants: {
       variant: {
-        primary: 'bg-[var(--color-accent)] text-white hover:brightness-95',
-        secondary: 'bg-white border border-[var(--color-border)] text-[var(--color-ink)] hover:bg-neutral-50',
-        ghost: 'text-[var(--color-accent)] hover:bg-[var(--color-accent-tint)]',
-        destructive: 'text-red-600 hover:bg-red-50',
+        primary: 'bg-primary text-primary-foreground hover:bg-primary-hover',
+        secondary: 'bg-surface border border-border text-foreground hover:bg-surface-hover',
+        ghost: 'text-primary hover:bg-primary-soft',
+        destructive: 'text-danger hover:bg-danger-soft',
       },
       size: {
         default: 'text-sm',

@@ -59,10 +59,10 @@ export function AssignSection({
           { value: 'person', label: 'By person' },
         ]}
       />
-      <p className="text-xs text-[var(--color-ink-soft)]">Same split, two views — use whichever is faster.</p>
+      <p className="text-xs text-foreground-muted">Same split, two views — use whichever is faster.</p>
 
       {mode === 'item' ? (
-        <ul className="flex flex-col divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-white">
+        <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface">
           {dishes.map((d) => {
             const shares = sharesByDish[d.id] ?? {}
             const total = totalSharesByDish[d.id] ?? 0
@@ -77,7 +77,7 @@ export function AssignSection({
                 >
                   <span className="flex items-center gap-2">
                     <span>{d.name}</span>
-                    {total <= 0 && <span className="rounded-full bg-[var(--color-warn)]/10 px-2 py-0.5 text-xs text-[var(--color-warn)]">unassigned</span>}
+                    {total <= 0 && <span className="rounded-full bg-warning-soft px-2 py-0.5 text-xs text-warning">unassigned</span>}
                   </span>
                   <span className="flex items-center gap-2">
                     {assignees.length > 0 && (
@@ -91,7 +91,7 @@ export function AssignSection({
                   </span>
                 </button>
                 {expanded && (
-                  <div className="flex flex-col gap-2 border-t border-dashed border-[var(--color-border)] p-3">
+                  <div className="flex flex-col gap-2 border-t border-dashed border-border p-3">
                     {people.map((p) => {
                       const mine = shares[p.id] ?? 0
                       return (
@@ -100,7 +100,7 @@ export function AssignSection({
                             <Avatar name={p.name} sortOrder={p.sortOrder} size={28} />
                             <span className="text-sm">{p.name}</span>
                             {mine > 0 && total > 0 && (
-                              <span className="text-xs text-[var(--color-ink-soft)]">
+                              <span className="text-xs text-foreground-muted">
                                 {mine}/{total}
                               </span>
                             )}
@@ -119,7 +119,7 @@ export function AssignSection({
           })}
         </ul>
       ) : (
-        <ul className="flex flex-col divide-y divide-[var(--color-border)] rounded-lg border border-[var(--color-border)] bg-white">
+        <ul className="flex flex-col divide-y divide-border rounded-lg border border-border bg-surface">
           {people.map((p) => {
             const expanded = expandedPersonId === p.id
             return (
@@ -136,14 +136,14 @@ export function AssignSection({
                   <span className="font-receipt text-sm">{formatCents(owedByPerson[p.id] ?? 0)}</span>
                 </button>
                 {expanded && (
-                  <div className="flex flex-col gap-2 border-t border-dashed border-[var(--color-border)] p-3">
+                  <div className="flex flex-col gap-2 border-t border-dashed border-border p-3">
                     {dishes.map((d) => {
                       const mine = sharesByDish[d.id]?.[p.id] ?? 0
                       return (
                         <div key={d.id} className="flex items-center justify-between gap-2">
                           <span className="text-sm">{d.name}</span>
                           <span className="flex items-center gap-2">
-                            <span className="font-receipt text-xs text-[var(--color-ink-soft)]">
+                            <span className="font-receipt text-xs text-foreground-muted">
                               {formatCents(d.unitPriceCents)}
                             </span>
                             <Stepper value={mine} onChange={(next) => onAdjust(d.id, p.id, next)} />

@@ -24,7 +24,7 @@ export default function HistoryScreen() {
         <button
           type="button"
           onClick={() => setProfileOpen(true)}
-          className="rounded-lg border border-[var(--color-border)] bg-white px-4 py-3 text-left text-sm"
+          className="rounded-lg border border-border bg-surface px-4 py-3 text-left text-sm"
         >
           {me.passkeysEnabled
             ? 'Add an email or passkey to keep your bills across devices.'
@@ -34,7 +34,7 @@ export default function HistoryScreen() {
 
       {bills && bills.length === 0 && (
         <div className="flex flex-col items-center gap-3 py-12 text-center">
-          <p className="text-sm text-[var(--color-ink-soft)]">No bills yet.</p>
+          <p className="text-sm text-foreground-muted">No bills yet.</p>
           <Button onClick={() => navigate('/')}>Start a bill</Button>
         </div>
       )}
@@ -59,13 +59,13 @@ function BillRow({ bill, onOpen }: { bill: SessionSummary; onOpen: () => void })
       <button
         type="button"
         onClick={onOpen}
-        className="flex w-full items-center justify-between rounded-lg border border-[var(--color-border)] bg-[var(--color-paper)] px-4 py-3 text-left"
+        className="flex w-full items-center justify-between rounded-lg border border-border bg-surface px-4 py-3 text-left"
       >
         <span className="flex items-center gap-2">
-          {bill.hasReceipt && <Receipt size={16} className="text-[var(--color-ink-soft)]" />}
+          {bill.hasReceipt && <Receipt size={16} className="text-foreground-muted" />}
           <span>
             <span className="block font-medium">{title}</span>
-            <span className="block text-xs text-[var(--color-ink-soft)]">{new Date(bill.updatedAt).toLocaleDateString()}</span>
+            <span className="block text-xs text-foreground-muted">{new Date(bill.updatedAt).toLocaleDateString()}</span>
           </span>
         </span>
         <span className="font-receipt text-sm font-medium">{formatCents(bill.subtotalCents)}</span>

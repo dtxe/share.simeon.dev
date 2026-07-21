@@ -14,7 +14,7 @@ export function AppHeader() {
         <Link
           href="/history"
           aria-label="History"
-          className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-neutral-100"
+          className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-surface-hover"
         >
           <History size={20} />
         </Link>
@@ -22,7 +22,7 @@ export function AppHeader() {
           type="button"
           aria-label="Profile"
           onClick={() => setProfileOpen(true)}
-          className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-neutral-100"
+          className="flex h-10 w-10 items-center justify-center rounded-full hover:bg-surface-hover"
         >
           <User size={20} />
         </button>

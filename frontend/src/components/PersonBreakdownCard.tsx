@@ -47,7 +47,7 @@ export function PersonBreakdownCard({
   const taxTip = owedCents - baseSum
 
   return (
-    <div className="overflow-hidden rounded-xl border border-[var(--color-border)] bg-[var(--color-paper)]">
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
       <button
         type="button"
         onClick={() => setOpen((o) => !o)}
@@ -64,22 +64,22 @@ export function PersonBreakdownCard({
         </span>
       </button>
       {open && (
-        <div className="border-t border-dashed border-[var(--color-border)] px-4 py-3 font-receipt text-sm">
+        <div className="border-t border-dashed border-border px-4 py-3 font-receipt text-sm">
           {lines.map((line, i) => (
             <div key={i} className="flex items-center justify-between gap-2 py-0.5">
-              <span className="text-[var(--color-ink-soft)]">{line.pct}</span>
+              <span className="text-foreground-muted">{line.pct}</span>
               <span className="flex-1 truncate px-2">{line.label}</span>
               <span>{formatCents(line.cents)}</span>
             </div>
           ))}
           {Math.abs(taxTip) >= 1 && (
-            <div className="flex items-center justify-between gap-2 py-0.5 text-[var(--color-ink-soft)]">
+            <div className="flex items-center justify-between gap-2 py-0.5 text-foreground-muted">
               <span />
               <span className="flex-1 truncate px-2">{taxTip >= 0 ? 'Taxes and tip' : 'Discount'}</span>
               <span>{formatCents(taxTip)}</span>
             </div>
           )}
-          <div className="mt-1 flex items-center justify-between gap-2 border-t border-dashed border-[var(--color-border)] pt-1 font-semibold">
+          <div className="mt-1 flex items-center justify-between gap-2 border-t border-dashed border-border pt-1 font-semibold">
             <span />
             <span className="flex-1 px-2">Total</span>
             <span>{formatCents(owedCents)}</span>

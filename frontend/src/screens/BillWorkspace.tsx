@@ -280,7 +280,7 @@ export default function BillWorkspace() {
     <div className="mx-auto flex min-h-full max-w-md flex-col gap-4 px-4 pb-28">
       <AppHeader />
 
-      <p className="text-sm font-medium text-[var(--color-ink-soft)]">The bill</p>
+      <p className="text-sm font-medium text-foreground-muted">The bill</p>
 
       <Section
         title="Receipt & items"
@@ -345,7 +345,7 @@ export default function BillWorkspace() {
         onToggle={() => toggleSection('assign')}
         complete={complete.assign}
         summary={complete.assign ? 'All matched' : undefined}
-        warn={!complete.assign && dishes.length > 0 ? <span className="text-[var(--color-warn)]">{unassigned.length} unmatched</span> : undefined}
+        warn={!complete.assign && dishes.length > 0 ? <span className="text-warning">{unassigned.length} unmatched</span> : undefined}
       >
         <AssignSection
           people={people}
@@ -358,7 +358,7 @@ export default function BillWorkspace() {
       </Section>
 
       {confirmUnassigned && (
-        <div className="fixed inset-x-0 bottom-16 z-10 mx-auto max-w-md rounded-lg border border-[var(--color-warn)] bg-white p-3 text-sm shadow-lg">
+        <div className="fixed inset-x-0 bottom-16 z-10 mx-auto max-w-md rounded-lg border border-warning bg-warning-soft p-3 text-sm shadow-lg">
           <p className="mb-2">{unassigned.length} dish(es) unassigned.</p>
           <div className="flex gap-2">
             <Button
@@ -377,8 +377,8 @@ export default function BillWorkspace() {
         </div>
       )}
 
-      <div className="fixed inset-x-0 bottom-0 mx-auto flex max-w-md items-center justify-between border-t border-[var(--color-border)] bg-[var(--color-bg)] p-4">
-        <span className="font-receipt text-sm text-[var(--color-ink-soft)]">
+      <div className="fixed inset-x-0 bottom-0 mx-auto flex max-w-md items-center justify-between border-t border-border bg-background p-4">
+        <span className="font-receipt text-sm text-foreground-muted">
           {dishes.length > 0 ? `${assignedCount} of ${dishes.length} assigned` : formatCents(session?.subtotalCents ?? 0)}
         </span>
         <Button disabled={dishes.length === 0 || people.length === 0} onClick={goToSettle}>
