@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react'
+import { useSyncExternalStore } from 'react'
 
 export type ThemePreference = 'system' | 'light' | 'dark'
 
 const STORAGE_KEY = 'share-theme'
+const listeners = new Set<() => void>()
 
 function isThemePreference(value: unknown): value is ThemePreference {
   return value === 'system' || value === 'light' || value === 'dark'
@@ -28,6 +29,33 @@ export function applyThemePreference(preference: ThemePreference): void {
   }
 }
 
+let currentPreference = readThemePreference()
+applyThemePreference(currentPreference)
+
+function notify(): void {
+  listeners.forEach((listener) => listener())
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener)
+  if (listeners.size === 1 && typeof window !== 'undefined') {
+    window.addEventListener('storage', handleStorage)
+  }
+  return () => {
+    listeners.delete(listener)
+    if (listeners.size === 0 && typeof window !== 'undefined') {
+      window.removeEventListener('storage', handleStorage)
+    }
+  }
+}
+
+function handleStorage(event: StorageEvent): void {
+  if (event.key !== STORAGE_KEY) return
+  currentPreference = isThemePreference(event.newValue) ? event.newValue : 'system'
+  applyThemePreference(currentPreference)
+  notify()
+}
+
 function persistThemePreference(preference: ThemePreference): void {
   try {
     if (typeof window !== 'undefined') window.localStorage.setItem(STORAGE_KEY, preference)
@@ -36,16 +64,19 @@ function persistThemePreference(preference: ThemePreference): void {
   }
 }
 
-export function useThemePreference() {
-  const [preference, setPreference] = useState<ThemePreference>(() => readThemePreference())
-
-  useEffect(() => {
+function setThemePreference(preference: ThemePreference): void {
+  if (preference === currentPreference) {
     applyThemePreference(preference)
-    persistThemePreference(preference)
-  }, [preference])
-
-  return {
-    preference,
-    setPreference: (next: ThemePreference) => setPreference(next),
+    return
   }
+  currentPreference = preference
+  applyThemePreference(preference)
+  persistThemePreference(preference)
+  notify()
+}
+
+export function useThemePreference() {
+  const preference = useSyncExternalStore(subscribe, () => currentPreference, (): ThemePreference => 'system')
+
+  return { preference, setPreference: setThemePreference }
 }
