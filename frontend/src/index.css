@@ -43,12 +43,12 @@
   --color-person-5: #ec4899;
   --color-person-6: #84cc16;
   --color-person-7: #64748b;
-  --color-person-0-foreground: #ffffff;
-  --color-person-1-foreground: #ffffff;
+  --color-person-0-foreground: #1c1b1a;
+  --color-person-1-foreground: #1c1b1a;
   --color-person-2-foreground: #1c1b1a;
-  --color-person-3-foreground: #ffffff;
-  --color-person-4-foreground: #ffffff;
-  --color-person-5-foreground: #ffffff;
+  --color-person-3-foreground: #000000;
+  --color-person-4-foreground: #1c1b1a;
+  --color-person-5-foreground: #1c1b1a;
   --color-person-6-foreground: #1c1b1a;
   --color-person-7-foreground: #ffffff;
 }
@@ -146,17 +146,28 @@ body {
   touch-action: manipulation;
 }
 
-input,
-button,
-textarea,
-select {
-  font: inherit;
-  color: var(--theme-foreground);
-  background-color: var(--theme-background);
-}
+@layer base {
+  input,
+  button,
+  textarea,
+  select {
+    font: inherit;
+    color: var(--theme-foreground);
+  }
 
-::placeholder {
-  color: var(--theme-foreground-subtle);
+  input,
+  textarea,
+  select {
+    background-color: var(--theme-surface);
+  }
+
+  button {
+    background-color: transparent;
+  }
+
+  ::placeholder {
+    color: var(--theme-foreground-subtle);
+  }
 }
 
 .tabular-nums {
