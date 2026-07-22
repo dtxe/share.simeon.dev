@@ -68,7 +68,7 @@ The original plan sketch (from before the identity model was finalized) assumed 
 The latest UI redesign supersedes the original multi-step mobile wizard (`/people`, `/items`, `/assign`, `/results`) and the earlier "focus + rail" assign screen. The shipped owner flow is now:
 
 - `/` and `/bill/:id` render the same `BillWorkspace`, a single narrow mobile canvas with collapsible sections for receipt/items, people, total paid, and assignment. Legacy step URLs redirect into this workspace so old links don't strand users.
-- Section completion drives progressive disclosure: the first incomplete section opens automatically, completed sections collapse, and manual user toggles are respected.
+- Section completion drives progressive disclosure: the first incomplete section opens automatically, completed sections collapse, and manual user toggles are respected. The assignment section stays open when every dish is matched because users may still need to adjust share amounts.
 - Receipt upload and manual item entry share the same editable item list. Upload immediately runs extraction; while the LLM is parsing, the UI shows a spinner plus shimmer rows so a multi-second model call doesn't look frozen.
 - People entry favors bulk paste (`one name per line`) plus inline rename/delete instead of one-chip-at-a-time choreography.
 - Assignment is now a compact two-mode segmented control: **By item** expands one dish to per-person steppers and a "Split evenly" action; **By person** expands one person to per-dish steppers. This keeps the same underlying shares map and two-way editing without a persistent bottom people rail.

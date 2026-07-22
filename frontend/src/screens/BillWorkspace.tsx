@@ -130,7 +130,7 @@ export default function BillWorkspace() {
     let changed = false
     const next = { ...open }
     for (const id of SECTION_ORDER) {
-      if (!prevComplete.current[id] && complete[id] && !userToggled[id]) {
+      if (id !== 'assign' && !prevComplete.current[id] && complete[id] && !userToggled[id]) {
         next[id] = false
         const idx = SECTION_ORDER.indexOf(id)
         for (let i = idx + 1; i < SECTION_ORDER.length; i++) {
