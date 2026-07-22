@@ -63,9 +63,9 @@ export function ShareLinkDrawer({
                   Share…
                 </button>
               )}
-              {confirmation ?? (
+              {confirmation || (
                 <button type="button" className="mt-4 flex items-center gap-1 text-xs text-foreground-muted" onClick={() => onRotateConfirmChange(true)}>
-                  <RefreshCw size={13} /> Generate a new link
+                  <RefreshCw size={13} /> Revoke and regenerate link
                 </button>
               )}
             </>

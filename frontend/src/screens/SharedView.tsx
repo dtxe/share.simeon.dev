@@ -17,7 +17,15 @@ export default function SharedView() {
     return <p className="p-8 text-center text-sm text-foreground-muted">Loading…</p>
   }
   if (isError || !data) {
-    return <p className="p-8 text-center text-sm text-foreground-muted">This link isn't valid or has expired.</p>
+    return (
+      <div className="mx-auto flex min-h-full max-w-md flex-col items-center justify-center gap-3 p-8 text-center">
+        <p className="text-sm text-foreground-muted">This link isn't valid or has expired.</p>
+        <p className="text-sm text-foreground-muted">Split your own receipt by uploading it to Share.</p>
+        <a href="/" className="text-sm font-medium text-primary underline">
+          Split your own receipt
+        </a>
+      </div>
+    )
   }
 
   const dishes = data.dishes ?? []
