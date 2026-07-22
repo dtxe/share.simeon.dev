@@ -43,6 +43,8 @@ type BillSession struct {
 	ExtractCount           int
 	CreatedAt              time.Time
 	UpdatedAt              time.Time
+	ShareToken             *string
+	ShareLinkExists        bool
 }
 
 type Person struct {
@@ -94,7 +96,7 @@ func (s *Store) CreateSession(ctx context.Context, ownerUserID string) (*BillSes
 func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]BillSession, error) {
 	rows, err := s.Pool.Query(ctx, `
 		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
-		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
+		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at, share_token, view_token_hash IS NOT NULL
 		FROM bill_sessions
 		WHERE owner_user_id = $1
 		ORDER BY updated_at DESC
@@ -109,7 +111,7 @@ func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]
 		var b BillSession
 		b.OwnerUserID = ownerUserID
 		if err := rows.Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
-			&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt); err != nil {
+			&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt, &b.ShareToken, &b.ShareLinkExists); err != nil {
 			return nil, err
 		}
 		out = append(out, b)
@@ -123,11 +125,11 @@ func (s *Store) GetSession(ctx context.Context, id, ownerUserID string) (*BillSe
 	b.OwnerUserID = ownerUserID
 	err := s.Pool.QueryRow(ctx, `
 		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
-		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
+		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at, share_token, view_token_hash IS NOT NULL
 		FROM bill_sessions
 		WHERE id = $1 AND owner_user_id = $2
 	`, id, ownerUserID).Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
-		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
+		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt, &b.ShareToken, &b.ShareLinkExists)
 	if err != nil {
 		return nil, noRows(err)
 	}
@@ -555,21 +557,77 @@ func (s *Store) recalculateSubtotalForDish(ctx context.Context, dishID string) e
 	return err
 }
 
-// GenerateShareToken (re)creates the bill's public view token, returning the
-// raw token to hand to the client — it's never retrievable again, only its
-// hash is stored.
-func (s *Store) GenerateShareToken(ctx context.Context, sessionID, ownerUserID string) (string, error) {
+type ShareLink struct {
+	Token     *string
+	Exists    bool
+	Available bool
+}
+
+func shareLinkForStoredToken(token *string, hash []byte) (ShareLink, bool) {
+	if token != nil {
+		return ShareLink{Token: token, Exists: true, Available: true}, true
+	}
+	if hash != nil {
+		return ShareLink{Exists: true, Available: false}, true
+	}
+	return ShareLink{}, false
+}
+
+func newShareToken() (string, []byte, error) {
 	b := make([]byte, 16) // 128 bits — a public read-only capability token
 	if _, err := rand.Read(b); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	raw := "bv_" + base64.RawURLEncoding.EncodeToString(b)
 	sum := sha256.Sum256([]byte(raw))
+	return raw, sum[:], nil
+}
+
+// GetOrCreateShareToken reuses an existing plaintext token. Legacy rows with
+// only view_token_hash remain active but cannot be displayed or auto-rotated.
+func (s *Store) GetOrCreateShareToken(ctx context.Context, sessionID, ownerUserID string) (ShareLink, error) {
+	tx, err := s.Pool.Begin(ctx)
+	if err != nil {
+		return ShareLink{}, err
+	}
+	defer tx.Rollback(ctx)
+	var token *string
+	var hash []byte
+	err = tx.QueryRow(ctx, `SELECT share_token, view_token_hash FROM bill_sessions WHERE id = $1 AND owner_user_id = $2 FOR UPDATE`, sessionID, ownerUserID).Scan(&token, &hash)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ShareLink{}, ErrNotFound
+	}
+	if err != nil {
+		return ShareLink{}, err
+	}
+	if link, exists := shareLinkForStoredToken(token, hash); exists {
+		return link, tx.Commit(ctx)
+	}
+	raw, sum, err := newShareToken()
+	if err != nil {
+		return ShareLink{}, err
+	}
+	if _, err = tx.Exec(ctx, `UPDATE bill_sessions SET share_token = $3, view_token_hash = $4, updated_at = now() WHERE id = $1 AND owner_user_id = $2`, sessionID, ownerUserID, raw, sum); err != nil {
+		return ShareLink{}, err
+	}
+	if err = tx.Commit(ctx); err != nil {
+		return ShareLink{}, err
+	}
+	return ShareLink{Token: &raw, Exists: true, Available: true}, nil
+}
+
+// RotateShareToken explicitly replaces both the plaintext token and lookup
+// hash, invalidating every URL made with the previous token.
+func (s *Store) RotateShareToken(ctx context.Context, sessionID, ownerUserID string) (string, error) {
+	raw, sum, err := newShareToken()
+	if err != nil {
+		return "", err
+	}
 
 	tag, err := s.Pool.Exec(ctx, `
-		UPDATE bill_sessions SET view_token_hash = $3, updated_at = now()
+		UPDATE bill_sessions SET share_token = $3, view_token_hash = $4, updated_at = now()
 		WHERE id = $1 AND owner_user_id = $2
-	`, sessionID, ownerUserID, sum[:])
+	`, sessionID, ownerUserID, raw, sum)
 	if err != nil {
 		return "", err
 	}

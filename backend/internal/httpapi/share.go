@@ -6,6 +6,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"share/backend/internal/auth"
+	"share/backend/internal/store"
 )
 
 func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
@@ -15,15 +16,34 @@ func (s *Server) handleCreateShare(w http.ResponseWriter, r *http.Request) {
 	}
 	sessionID := chi.URLParam(r, "id")
 
-	token, err := s.Store.GenerateShareToken(r.Context(), sessionID, userID)
+	link, err := s.Store.GetOrCreateShareToken(r.Context(), sessionID, userID)
 	if err != nil {
 		storeErrToStatus(w, err)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{
-		"viewToken": token,
-		"shareUrl":  s.Cfg.PublicBaseURL + "/s/" + token,
-	})
+	writeShareLink(w, s.Cfg.PublicBaseURL, link)
+}
+
+func (s *Server) handleRotateShare(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUser(w, r)
+	if !ok {
+		return
+	}
+	token, err := s.Store.RotateShareToken(r.Context(), chi.URLParam(r, "id"), userID)
+	if err != nil {
+		storeErrToStatus(w, err)
+		return
+	}
+	writeShareLink(w, s.Cfg.PublicBaseURL, store.ShareLink{Token: &token, Exists: true, Available: true})
+}
+
+func writeShareLink(w http.ResponseWriter, baseURL string, link store.ShareLink) {
+	response := map[string]any{"shareLinkExists": link.Exists, "shareLinkAvailable": link.Available, "viewToken": nil, "shareUrl": nil}
+	if link.Token != nil {
+		response["viewToken"] = *link.Token
+		response["shareUrl"] = baseURL + "/s/" + *link.Token
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 // PublicRouter is mounted separately from the main /api group in

@@ -24,12 +24,26 @@ export default function SettleScreen() {
 
   const [shareOpen, setShareOpen] = useState(false)
   const [shareUrl, setShareUrl] = useState<string | null>(null)
+  const [rotateConfirm, setRotateConfirm] = useState(false)
+
+  useEffect(() => {
+    if (data?.session.shareUrl) setShareUrl(data.session.shareUrl)
+  }, [data?.session.shareUrl])
 
   const createShare = useMutation({
     mutationFn: () => api.createShare(id!),
     onSuccess: (res) => {
       setShareUrl(res.shareUrl)
       setShareOpen(true)
+    },
+  })
+
+  const rotateShare = useMutation({
+    mutationFn: () => api.rotateShare(id!),
+    onSuccess: (res) => {
+      setShareUrl(res.shareUrl)
+      setRotateConfirm(false)
+      qc.invalidateQueries({ queryKey: ['session', id] })
     },
   })
 
@@ -45,6 +59,8 @@ export default function SettleScreen() {
   const dishes = data?.dishes ?? EMPTY_DISHES
   const portions = data?.portions ?? EMPTY_PORTIONS
   const result = breakdown?.result
+  const shareLinkExists = session?.shareLinkExists || shareUrl !== null
+  const shareLinkAvailable = session?.shareLinkAvailable || shareUrl !== null
 
   const subtotalCents = session?.subtotalCents ?? 0
   const totalPaidCents = session?.totalPaidCents ?? null
@@ -111,11 +127,18 @@ export default function SettleScreen() {
           Edit split
         </Button>
         <Button disabled={createShare.isPending} onClick={() => createShare.mutate()}>
-          Create share link
+          {session?.shareLinkExists ? 'Share link' : 'Create share link'}
         </Button>
       </div>
 
-      <ShareLinkDrawer open={shareOpen} onOpenChange={setShareOpen} shareUrl={shareUrl} />
+      <ShareLinkDrawer open={shareOpen} onOpenChange={(open) => {
+        setShareOpen(open)
+        if (!open) setRotateConfirm(false)
+      }} shareUrl={shareUrl}
+        shareLinkExists={shareLinkExists}
+        shareLinkAvailable={shareLinkAvailable}
+        rotateConfirm={rotateConfirm} onRotateConfirmChange={setRotateConfirm}
+        onRotate={() => rotateShare.mutate()} rotating={rotateShare.isPending} />
     </div>
   )
 }

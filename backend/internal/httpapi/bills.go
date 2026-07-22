@@ -54,28 +54,33 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 }
 
 type sessionSummaryDTO struct {
-	ID             string     `json:"id"`
-	Title          *string    `json:"title"`
-	RestaurantName *string    `json:"restaurantName"`
-	BillDate       *time.Time `json:"billDate"`
-	SubtotalCents  int64      `json:"subtotalCents"`
-	TotalPaidCents *int64     `json:"totalPaidCents"`
-	HasReceipt     bool       `json:"hasReceipt"`
-	CreatedAt      time.Time  `json:"createdAt"`
-	UpdatedAt      time.Time  `json:"updatedAt"`
+	ID                 string     `json:"id"`
+	Title              *string    `json:"title"`
+	RestaurantName     *string    `json:"restaurantName"`
+	BillDate           *time.Time `json:"billDate"`
+	SubtotalCents      int64      `json:"subtotalCents"`
+	TotalPaidCents     *int64     `json:"totalPaidCents"`
+	HasReceipt         bool       `json:"hasReceipt"`
+	ShareLinkExists    bool       `json:"shareLinkExists"`
+	ShareLinkAvailable bool       `json:"shareLinkAvailable"`
+	ShareURL           *string    `json:"shareUrl"`
+	CreatedAt          time.Time  `json:"createdAt"`
+	UpdatedAt          time.Time  `json:"updatedAt"`
 }
 
 func sessionSummary(b store.BillSession) sessionSummaryDTO {
 	return sessionSummaryDTO{
-		ID:             b.ID,
-		Title:          b.Title,
-		RestaurantName: b.RestaurantName,
-		BillDate:       b.BillDate,
-		SubtotalCents:  b.SubtotalCents,
-		TotalPaidCents: b.TotalPaidCents,
-		HasReceipt:     b.ReceiptImagePath != nil,
-		CreatedAt:      b.CreatedAt,
-		UpdatedAt:      b.UpdatedAt,
+		ID:                 b.ID,
+		Title:              b.Title,
+		RestaurantName:     b.RestaurantName,
+		BillDate:           b.BillDate,
+		SubtotalCents:      b.SubtotalCents,
+		TotalPaidCents:     b.TotalPaidCents,
+		HasReceipt:         b.ReceiptImagePath != nil,
+		ShareLinkExists:    b.ShareLinkExists,
+		ShareLinkAvailable: b.ShareToken != nil,
+		CreatedAt:          b.CreatedAt,
+		UpdatedAt:          b.UpdatedAt,
 	}
 }
 
@@ -124,8 +129,13 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	summary := sessionSummary(*sess)
+	if sess.ShareToken != nil {
+		url := s.Cfg.PublicBaseURL + "/s/" + *sess.ShareToken
+		summary.ShareURL = &url
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"session":  sessionSummary(*sess),
+		"session":  summary,
 		"people":   people,
 		"dishes":   dishes,
 		"portions": portions,

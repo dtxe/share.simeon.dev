@@ -13,6 +13,9 @@ export interface SessionSummary {
   subtotalCents: number
   totalPaidCents: number | null
   hasReceipt: boolean
+  shareLinkExists: boolean
+  shareLinkAvailable: boolean
+  shareUrl: string | null
   createdAt: string
   updatedAt: string
 }
@@ -195,7 +198,9 @@ export const api = {
     }>(`/sessions/${enc(sessionId)}/extract`, { method: 'POST' }),
 
   createShare: (sessionId: string) =>
-    request<{ viewToken: string; shareUrl: string }>(`/sessions/${enc(sessionId)}/share`, { method: 'POST' }),
+    request<{ viewToken: string | null; shareUrl: string | null; shareLinkExists: boolean; shareLinkAvailable: boolean }>(`/sessions/${enc(sessionId)}/share`, { method: 'POST' }),
+  rotateShare: (sessionId: string) =>
+    request<{ viewToken: string; shareUrl: string; shareLinkExists: boolean; shareLinkAvailable: boolean }>(`/sessions/${enc(sessionId)}/share/rotate`, { method: 'POST' }),
 
   getPublicView: (token: string) =>
     request<{

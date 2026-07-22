@@ -74,6 +74,7 @@ func NewRouter(s *Server) http.Handler {
 		api.Patch("/sessions/{id}", s.handleUpdateSession)
 		api.Get("/sessions/{id}/breakdown", s.handleBreakdown)
 		api.Post("/sessions/{id}/share", s.handleCreateShare)
+		api.Post("/sessions/{id}/share/rotate", s.handleRotateShare)
 
 		api.Post("/sessions/{id}/people", s.handleAddPerson)
 		api.Patch("/people/{personId}", s.handleRenamePerson)
