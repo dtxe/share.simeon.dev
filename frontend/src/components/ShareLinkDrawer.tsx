@@ -72,11 +72,9 @@ export function ShareLinkDrawer({
           ) : shareLinkExists ? (
             <>
               <p className="text-sm text-foreground-muted">A share link exists, but this older link cannot be displayed. Generate a new link to view it.</p>
-              {confirmation ?? (
-                <button type="button" className="mt-4 text-xs text-primary" onClick={() => onRotateConfirmChange(true)}>
-                  Generate a new link
-                </button>
-              )}
+              <button type="button" className="mt-4 text-xs text-primary" disabled={rotating} onClick={onRotate}>
+                {rotating ? 'Generating link…' : 'Generate a new link'}
+              </button>
             </>
           ) : (
             <p className="text-sm text-foreground-muted">Generating link…</p>
