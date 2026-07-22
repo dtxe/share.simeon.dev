@@ -152,15 +152,17 @@ function TitleField({
   suggestion: string
   onSave: (title: string) => void
 }) {
-  const [value, setValue] = useState(title ?? '')
+  const [value, setValue] = useState(title ?? suggestion)
   const hydrated = useRef(false)
 
   useEffect(() => {
     if (!hydrated.current) {
-      setValue(title ?? '')
+      const initialTitle = title ?? suggestion
+      setValue(initialTitle)
       hydrated.current = true
+      if (!title && initialTitle) onSave(initialTitle)
     }
-  }, [title])
+  }, [title, suggestion, onSave])
 
   function commit() {
     const trimmed = value.trim().slice(0, 120)
@@ -173,21 +175,8 @@ function TitleField({
         value={value}
         onChange={(e) => setValue(e.target.value)}
         onBlur={commit}
-        placeholder={suggestion}
         className="w-full border-none bg-transparent text-center text-2xl font-semibold focus:outline-none"
       />
-      {!value && suggestion && (
-        <button
-          type="button"
-          onClick={() => {
-            setValue(suggestion)
-            onSave(suggestion)
-          }}
-          className="mt-1 text-xs text-primary"
-        >
-          Use "{suggestion}"
-        </button>
-      )}
     </div>
   )
 }
