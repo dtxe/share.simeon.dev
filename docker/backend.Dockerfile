@@ -18,7 +18,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o /out/healthcheck ./cmd/healthcheck
 RUN CGO_ENABLED=0 GOOS=linux go build -o /out/receipt-migrate ./cmd/receipt-migrate
 RUN mkdir -p /out/data/uploads && chown -R 65532:65532 /out/data
 
-FROM gcr.io/distroless/static-debian12@sha256:9c346e4be81b5ca7ff31a0d89eaeade58b0f95cfd3baed1f36083ddb47ca3160 AS prod
+FROM gcr.io/distroless/static-debian12@sha256:a9fcaedd4c9b59e12dd65d954f0b5044f19b0647a8a3712e77205df9e7b102cd AS prod
 COPY --from=build /out/server /server
 COPY --from=build /out/healthcheck /healthcheck
 COPY --from=build /out/receipt-migrate /receipt-migrate
