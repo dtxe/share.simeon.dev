@@ -171,6 +171,12 @@ interface NotesFieldHandle {
   save: () => Promise<void>
 }
 
+const NOTE_MAX_CODE_POINTS = 500
+
+function limitNoteCodePoints(note: string): string {
+  return Array.from(note).slice(0, NOTE_MAX_CODE_POINTS).join('')
+}
+
 const NotesField = forwardRef<NotesFieldHandle, { notes: string | null; onSave: (notes: string) => Promise<void> }>(function NotesField(
   { notes, onSave },
   ref,
@@ -241,20 +247,20 @@ const NotesField = forwardRef<NotesFieldHandle, { notes: string | null; onSave: 
         id="bill-notes"
         value={value}
         onChange={(event) => {
-          valueRef.current = event.target.value
-          setValue(event.target.value)
+          const next = limitNoteCodePoints(event.target.value)
+          valueRef.current = next
+          setValue(next)
           dirtyRef.current = true
           setError(null)
         }}
         onBlur={() => void save().catch(() => {})}
-        maxLength={500}
         rows={3}
         placeholder="Payment details, context, or anything else to share"
         className="mt-2 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-none placeholder:text-foreground-subtle focus:border-primary"
       />
       <div className="mt-2 flex justify-between gap-3 text-xs text-foreground-muted">
         <span>Visible to anyone with the share link.</span>
-        {saving ? <span className="shrink-0">Saving…</span> : <span className="shrink-0">{value.length}/500</span>}
+        {saving ? <span className="shrink-0">Saving…</span> : <span className="shrink-0">{Array.from(value).length}/{NOTE_MAX_CODE_POINTS}</span>}
       </div>
       {error && <p className="mt-2 text-xs text-danger">{error}</p>}
     </div>
