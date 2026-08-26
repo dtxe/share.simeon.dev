@@ -107,7 +107,7 @@ Tracks progress against the approved plan (`docs/plan.md` is the original; `docs
 
 ## 12. Receipt + share end-to-end
 - [x] Receipt/items section wired to `POST /sessions/:id/extract`; graceful failure path tested live (no API key configured)
-- [x] SharedView (`/s/:token`) — chrome-free, live-verified in a **separate cookie-less browser session** (confirmed zero cookies sent, correct names/amounts and public plain-text notes rendered, no owner/session id or edit capability exposed); now mirrors the settle presentation with person breakdown cards when public dish detail is available
+- [x] SharedView (`/s/:token`) — chrome-free, live-verified in a **separate cookie-less browser session** (confirmed zero cookies sent, correct names/amounts, no owner/session id or edit capability exposed); now also renders public plain-text notes and mirrors the settle presentation with person breakdown cards when public dish detail is available
 - [x] Share link creation — live-verified end to end (Settle → Share link → copy → open in fresh session → correct public breakdown)
 
 ### Bugs found via live browser testing (all fixed)

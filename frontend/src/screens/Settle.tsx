@@ -25,6 +25,8 @@ export default function SettleScreen() {
   const [shareOpen, setShareOpen] = useState(false)
   const [shareUrl, setShareUrl] = useState<string | null>(null)
   const [rotateConfirm, setRotateConfirm] = useState(false)
+  const [creatingShareLink, setCreatingShareLink] = useState(false)
+  const creatingShareLinkRef = useRef(false)
 
   useEffect(() => {
     if (data?.session.shareUrl) setShareUrl(data.session.shareUrl)
@@ -58,11 +60,17 @@ export default function SettleScreen() {
   const notesField = useRef<NotesFieldHandle>(null)
 
   async function createShareLink() {
+    if (creatingShareLinkRef.current) return
+    creatingShareLinkRef.current = true
+    setCreatingShareLink(true)
     try {
       await notesField.current?.save()
       await createShare.mutateAsync()
     } catch {
       // Keep the drawer closed when saving notes failed; the field shows the error.
+    } finally {
+      creatingShareLinkRef.current = false
+      setCreatingShareLink(false)
     }
   }
 
@@ -142,8 +150,8 @@ export default function SettleScreen() {
         <Button variant="secondary" onClick={() => navigate(`/bill/${id}`)}>
           Edit split
         </Button>
-        <Button disabled={createShare.isPending} onClick={() => void createShareLink()}>
-          {session?.shareLinkExists ? 'Share link' : 'Create share link'}
+        <Button disabled={creatingShareLink} onClick={() => void createShareLink()}>
+          {creatingShareLink ? 'Preparing share link…' : session?.shareLinkExists ? 'Share link' : 'Create share link'}
         </Button>
       </div>
 
