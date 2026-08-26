@@ -73,9 +73,9 @@ The latest UI redesign supersedes the original multi-step mobile wizard (`/peopl
 - People entry favors bulk paste (`one name per line`) plus inline rename/delete instead of one-chip-at-a-time choreography.
 - Assignment is now a compact two-mode segmented control: **By item** expands one dish to per-person steppers and a "Split evenly" action; **By person** expands one person to per-dish steppers. This keeps the same underlying shares map and two-way editing without a persistent bottom people rail.
 - Total paid is inline in the workspace, not a drawer. It defaults from extracted/entered subtotal when useful, shows the tax/tip delta inline, and stays editable before settlement.
-- `/bill/:id/settle` is the results screen: title editing, subtotal/tax-tip/total receipt summary, person breakdown accordions, optional receipt thumbnail, fixed edit/share actions, and the `ShareLinkDrawer` for copy/native-share.
+- `/bill/:id/settle` is the results screen: title editing, subtotal/tax-tip/total receipt summary, public bill notes, person breakdown accordions, optional receipt thumbnail, fixed edit/share actions, and the `ShareLinkDrawer` for copy/native-share. Notes are deliberately free-form but explicitly labeled as visible to anyone with the share link.
 - `/history` is a separate lightweight bill list. Account/history recovery lives in `ProfileDrawer` from the header, not in a welcome-screen banner.
-- `/s/:token` remains chrome-free and read-only, but now mirrors the settle presentation with pre-expanded/expandable person cards when public dish detail is available.
+- `/s/:token` remains chrome-free and read-only, but now mirrors the settle presentation with public notes and pre-expanded/expandable person cards when public dish detail is available. Notes are plain text only and are intentionally public to link holders.
 
 ## Frontend visual language
 The shipped redesign uses a restrained receipt-led system rather than generic app chrome: warm paper background (`#faf9f7`), white paper cards, dashed dividers, green accent, and JetBrains Mono as the global typeface. `.font-receipt` is still applied explicitly to money, counts, URLs, and receipt-like summaries so numeric UI gets tabular figures even if the global font changes later.

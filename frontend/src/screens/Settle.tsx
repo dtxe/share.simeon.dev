@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { useParams, useLocation } from 'wouter'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { AppHeader } from '../components/AppHeader'
@@ -51,6 +51,20 @@ export default function SettleScreen() {
     mutationFn: (title: string) => api.updateSession(id!, { title }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['session', id] }),
   })
+  const updateNotes = useMutation({
+    mutationFn: (notes: string) => api.updateSession(id!, { notes }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['session', id] }),
+  })
+  const notesField = useRef<NotesFieldHandle>(null)
+
+  async function createShareLink() {
+    try {
+      await notesField.current?.save()
+      await createShare.mutateAsync()
+    } catch {
+      // Keep the drawer closed when saving notes failed; the field shows the error.
+    }
+  }
 
   if (isAuthError(error)) return <NotAuthorized />
 
@@ -99,6 +113,8 @@ export default function SettleScreen() {
         </div>
       </div>
 
+      {session && <NotesField ref={notesField} notes={session.notes} onSave={(notes) => updateNotes.mutateAsync(notes)} />}
+
       {result && result.unassignedDishIds && result.unassignedDishIds.length > 0 && (
         <button
           type="button"
@@ -126,7 +142,7 @@ export default function SettleScreen() {
         <Button variant="secondary" onClick={() => navigate(`/bill/${id}`)}>
           Edit split
         </Button>
-        <Button disabled={createShare.isPending} onClick={() => createShare.mutate()}>
+        <Button disabled={createShare.isPending} onClick={() => void createShareLink()}>
           {session?.shareLinkExists ? 'Share link' : 'Create share link'}
         </Button>
       </div>
@@ -142,6 +158,100 @@ export default function SettleScreen() {
     </div>
   )
 }
+
+interface NotesFieldHandle {
+  save: () => Promise<void>
+}
+
+const NotesField = forwardRef<NotesFieldHandle, { notes: string | null; onSave: (notes: string) => Promise<void> }>(function NotesField(
+  { notes, onSave },
+  ref,
+) {
+  const [value, setValue] = useState(notes ?? '')
+  const [error, setError] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const valueRef = useRef(value)
+  const dirtyRef = useRef(false)
+  const serverNotesRef = useRef(notes ?? '')
+  const savePromiseRef = useRef<Promise<void> | null>(null)
+
+  useEffect(() => {
+    serverNotesRef.current = notes ?? ''
+    if (!dirtyRef.current) {
+      valueRef.current = notes ?? ''
+      setValue(notes ?? '')
+    }
+  }, [notes])
+
+  const save = useCallback(async (): Promise<void> => {
+    if (savePromiseRef.current) {
+      await savePromiseRef.current
+      return save()
+    }
+
+    const next = valueRef.current.trim()
+    if (next === serverNotesRef.current) {
+      valueRef.current = next
+      setValue(next)
+      dirtyRef.current = false
+      return
+    }
+
+    const pending = (async () => {
+      setSaving(true)
+      setError(null)
+      try {
+        await onSave(next)
+        serverNotesRef.current = next
+        if (valueRef.current === next) {
+          setValue(next)
+          dirtyRef.current = false
+        }
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Could not save notes. Try again.')
+        throw err
+      } finally {
+        setSaving(false)
+      }
+    })()
+    savePromiseRef.current = pending
+    try {
+      await pending
+    } finally {
+      savePromiseRef.current = null
+    }
+  }, [onSave])
+
+  useImperativeHandle(ref, () => ({ save }), [save])
+
+  return (
+    <div className="rounded-xl border border-border bg-surface p-4">
+      <label htmlFor="bill-notes" className="block text-sm font-medium">
+        Notes
+      </label>
+      <textarea
+        id="bill-notes"
+        value={value}
+        onChange={(event) => {
+          valueRef.current = event.target.value
+          setValue(event.target.value)
+          dirtyRef.current = true
+          setError(null)
+        }}
+        onBlur={() => void save().catch(() => {})}
+        maxLength={500}
+        rows={3}
+        placeholder="Payment details, context, or anything else to share"
+        className="mt-2 w-full resize-y rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 outline-none placeholder:text-foreground-subtle focus:border-primary"
+      />
+      <div className="mt-2 flex justify-between gap-3 text-xs text-foreground-muted">
+        <span>Visible to anyone with the share link.</span>
+        {saving ? <span className="shrink-0">Saving…</span> : <span className="shrink-0">{value.length}/500</span>}
+      </div>
+      {error && <p className="mt-2 text-xs text-danger">{error}</p>}
+    </div>
+  )
+})
 
 function TitleField({
   title,

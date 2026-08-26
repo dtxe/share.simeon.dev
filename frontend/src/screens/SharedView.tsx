@@ -60,6 +60,13 @@ export default function SharedView() {
         </div>
       </div>
 
+      {data.notes && (
+        <section className="rounded-xl border border-border bg-surface p-4">
+          <h2 className="text-sm font-medium">Notes</h2>
+          <p className="mt-2 whitespace-pre-wrap text-sm leading-6 text-foreground-muted">{data.notes}</p>
+        </section>
+      )}
+
       <div className="flex flex-col gap-2">
         {data.result.people.map((p) => {
           const person = data.people.find((person) => person.id === p.personId)

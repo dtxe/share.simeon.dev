@@ -12,6 +12,7 @@ export interface SessionSummary {
   billDate: string | null
   subtotalCents: number
   totalPaidCents: number | null
+  notes: string | null
   hasReceipt: boolean
   shareLinkExists: boolean
   shareLinkAvailable: boolean
@@ -135,7 +136,7 @@ export const api = {
   getSession: (id: string) => request<SessionDetail>(`/sessions/${enc(id)}`),
   updateSession: (
     id: string,
-    patch: Partial<{ title: string; restaurantName: string; billDate: string; totalPaidCents: number }>,
+    patch: Partial<{ title: string; restaurantName: string; billDate: string; totalPaidCents: number; notes: string }>,
   ) => request<void>(`/sessions/${enc(id)}`, { method: 'PATCH', body: JSON.stringify(patch) }),
 
   addPerson: (sessionId: string, name: string) =>
@@ -209,6 +210,7 @@ export const api = {
       billDate: string | null
       subtotalCents: number
       totalPaidCents: number | null
+      notes: string | null
       hasReceipt: boolean
       people: { id: string; name: string; sortOrder: number }[]
       dishes?: { id: string; name: string; unitPriceCents: number }[]
