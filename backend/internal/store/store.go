@@ -156,7 +156,7 @@ func (s *Store) UpdateSession(ctx context.Context, id, ownerUserID string, patch
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE bill_sessions
 		SET title = COALESCE($3, title),
-		    notes = CASE WHEN $4 IS NULL THEN notes WHEN $4 = '' THEN NULL ELSE $4 END,
+		    notes = CASE WHEN $4::text IS NULL THEN notes WHEN $4::text = '' THEN NULL ELSE $4::text END,
 		    restaurant_name = COALESCE($5, restaurant_name),
 		    bill_date = COALESCE($6, bill_date),
 		    total_paid_cents = COALESCE($7, total_paid_cents),
