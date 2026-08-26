@@ -6,7 +6,9 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
 
@@ -56,6 +58,7 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 type sessionSummaryDTO struct {
 	ID                 string     `json:"id"`
 	Title              *string    `json:"title"`
+	Notes              *string    `json:"notes"`
 	RestaurantName     *string    `json:"restaurantName"`
 	BillDate           *time.Time `json:"billDate"`
 	SubtotalCents      int64      `json:"subtotalCents"`
@@ -72,6 +75,7 @@ func sessionSummary(b store.BillSession) sessionSummaryDTO {
 	return sessionSummaryDTO{
 		ID:                 b.ID,
 		Title:              b.Title,
+		Notes:              b.Notes,
 		RestaurantName:     b.RestaurantName,
 		BillDate:           b.BillDate,
 		SubtotalCents:      b.SubtotalCents,
@@ -144,9 +148,25 @@ func (s *Server) handleGetSession(w http.ResponseWriter, r *http.Request) {
 
 type updateSessionBody struct {
 	Title          *string    `json:"title"`
+	Notes          *string    `json:"notes"`
 	RestaurantName *string    `json:"restaurantName"`
 	BillDate       *time.Time `json:"billDate"`
 	TotalPaidCents *int64     `json:"totalPaidCents"`
+}
+
+const maxNotesCharacters = 500
+
+// normalizeNotes preserves an omitted field, while a supplied blank value is
+// retained as an empty string so the store can clear the persisted value.
+func normalizeNotes(notes *string) (*string, bool) {
+	if notes == nil {
+		return nil, true
+	}
+	trimmed := strings.TrimSpace(*notes)
+	if utf8.RuneCountInString(trimmed) > maxNotesCharacters {
+		return nil, false
+	}
+	return &trimmed, true
 }
 
 func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
@@ -163,6 +183,11 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 		writeJSONError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
+	var notesOK bool
+	if body.Notes, notesOK = normalizeNotes(body.Notes); !notesOK {
+		writeJSONError(w, http.StatusBadRequest, "notes too long")
+		return
+	}
 	if body.TotalPaidCents != nil && (*body.TotalPaidCents < 0 || *body.TotalPaidCents > 5_000_000_00) {
 		writeJSONError(w, http.StatusBadRequest, "totalPaidCents out of range")
 		return
@@ -174,6 +199,7 @@ func (s *Server) handleUpdateSession(w http.ResponseWriter, r *http.Request) {
 
 	err := s.Store.UpdateSession(r.Context(), id, userID, store.SessionPatch{
 		Title:          body.Title,
+		Notes:          body.Notes,
 		RestaurantName: body.RestaurantName,
 		BillDate:       body.BillDate,
 		TotalPaidCents: body.TotalPaidCents,

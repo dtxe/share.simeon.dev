@@ -116,6 +116,7 @@ func (s *Server) handlePublicView(w http.ResponseWriter, r *http.Request) {
 	// don't leak here just because someone forgot to update this endpoint.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"title":          sess.Title,
+		"notes":          sess.Notes,
 		"restaurantName": sess.RestaurantName,
 		"billDate":       sess.BillDate,
 		"subtotalCents":  sess.SubtotalCents,

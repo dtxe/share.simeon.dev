@@ -12,6 +12,7 @@ import (
 	"crypto/sha256"
 	"encoding/base64"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -34,6 +35,7 @@ type BillSession struct {
 	ID                     string
 	OwnerUserID            string
 	Title                  *string
+	Notes                  *string
 	RestaurantName         *string
 	BillDate               *time.Time
 	SubtotalCents          int64
@@ -95,7 +97,7 @@ func (s *Store) CreateSession(ctx context.Context, ownerUserID string) (*BillSes
 // ListSessionsByOwner is the "history" list — most recently updated first.
 func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]BillSession, error) {
 	rows, err := s.Pool.Query(ctx, `
-		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
+		SELECT id::text, title, notes, restaurant_name, bill_date, subtotal_cents,
 		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at, share_token, view_token_hash IS NOT NULL
 		FROM bill_sessions
 		WHERE owner_user_id = $1
@@ -110,7 +112,7 @@ func (s *Store) ListSessionsByOwner(ctx context.Context, ownerUserID string) ([]
 	for rows.Next() {
 		var b BillSession
 		b.OwnerUserID = ownerUserID
-		if err := rows.Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
+		if err := rows.Scan(&b.ID, &b.Title, &b.Notes, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
 			&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt, &b.ShareToken, &b.ShareLinkExists); err != nil {
 			return nil, err
 		}
@@ -124,11 +126,11 @@ func (s *Store) GetSession(ctx context.Context, id, ownerUserID string) (*BillSe
 	var b BillSession
 	b.OwnerUserID = ownerUserID
 	err := s.Pool.QueryRow(ctx, `
-		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
+		SELECT id::text, title, notes, restaurant_name, bill_date, subtotal_cents,
 		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at, share_token, view_token_hash IS NOT NULL
 		FROM bill_sessions
 		WHERE id = $1 AND owner_user_id = $2
-	`, id, ownerUserID).Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
+	`, id, ownerUserID).Scan(&b.ID, &b.Title, &b.Notes, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
 		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt, &b.ShareToken, &b.ShareLinkExists)
 	if err != nil {
 		return nil, noRows(err)
@@ -138,6 +140,7 @@ func (s *Store) GetSession(ctx context.Context, id, ownerUserID string) (*BillSe
 
 type SessionPatch struct {
 	Title          *string
+	Notes          *string
 	RestaurantName *string
 	BillDate       *time.Time
 	TotalPaidCents *int64
@@ -146,16 +149,21 @@ type SessionPatch struct {
 // UpdateSession applies whichever fields are non-nil in patch. Bumps
 // expires_at back out to 60 days from now on every mutation.
 func (s *Store) UpdateSession(ctx context.Context, id, ownerUserID string, patch SessionPatch) error {
+	if patch.Notes != nil {
+		notes := strings.TrimSpace(*patch.Notes)
+		patch.Notes = &notes
+	}
 	tag, err := s.Pool.Exec(ctx, `
 		UPDATE bill_sessions
 		SET title = COALESCE($3, title),
-		    restaurant_name = COALESCE($4, restaurant_name),
-		    bill_date = COALESCE($5, bill_date),
-		    total_paid_cents = COALESCE($6, total_paid_cents),
+		    notes = CASE WHEN $4 IS NULL THEN notes WHEN $4 = '' THEN NULL ELSE $4 END,
+		    restaurant_name = COALESCE($5, restaurant_name),
+		    bill_date = COALESCE($6, bill_date),
+		    total_paid_cents = COALESCE($7, total_paid_cents),
 		    updated_at = now(),
 		    expires_at = now() + interval '60 days'
 		WHERE id = $1 AND owner_user_id = $2
-	`, id, ownerUserID, patch.Title, patch.RestaurantName, patch.BillDate, patch.TotalPaidCents)
+	`, id, ownerUserID, patch.Title, patch.Notes, patch.RestaurantName, patch.BillDate, patch.TotalPaidCents)
 	if err != nil {
 		return err
 	}
@@ -643,11 +651,11 @@ func (s *Store) GetByViewToken(ctx context.Context, rawToken string) (*BillSessi
 	sum := sha256.Sum256([]byte(rawToken))
 	var b BillSession
 	err := s.Pool.QueryRow(ctx, `
-		SELECT id::text, title, restaurant_name, bill_date, subtotal_cents,
+		SELECT id::text, title, notes, restaurant_name, bill_date, subtotal_cents,
 		       total_paid_cents, receipt_image_path, receipt_image_compressed, extract_count, created_at, updated_at
 		FROM bill_sessions
 		WHERE view_token_hash = $1
-	`, sum[:]).Scan(&b.ID, &b.Title, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
+	`, sum[:]).Scan(&b.ID, &b.Title, &b.Notes, &b.RestaurantName, &b.BillDate, &b.SubtotalCents,
 		&b.TotalPaidCents, &b.ReceiptImagePath, &b.ReceiptImageCompressed, &b.ExtractCount, &b.CreatedAt, &b.UpdatedAt)
 	if err != nil {
 		return nil, noRows(err)
