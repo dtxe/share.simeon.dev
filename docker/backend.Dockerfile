@@ -1,4 +1,4 @@
-FROM golang:1.25.11-alpine@sha256:523c3effe300580ed375e43f43b1c9b091b68e935a7c3a92bfcc4e7ed55b18c2 AS base
+FROM golang:1.27.1-alpine@sha256:cf6fca6641884b8433441b2b0652976f975e1d0fdd26d177eaaf8596087f3125 AS base
 WORKDIR /app
 RUN apk add --no-cache git
 COPY backend/go.mod backend/go.sum ./
